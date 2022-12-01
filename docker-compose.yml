@@ -109,10 +109,3 @@ services:
         restart: 'no'
         scale: 0
 
-volumes:
-    zookeeper-data:
-    zookeeper-datalog:
-    zookeeper-logs:
-    object_storage:
-    postgres-data:
-    clickhouse-data:

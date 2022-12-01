@@ -1,10 +1,3 @@
-#
-# `docker-compose` file used ONLY for hobby deployments.
-#
-# Please take a look at https://posthog.com/docs/self-host/deploy/hobby
-# for more info.
-#
-
 services:
     db:
         extends:
@@ -17,10 +10,6 @@ services:
             file: docker-compose.base.yml
             service: redis
     clickhouse:
-        #
-        # Note: please keep the default version in sync across
-        #       `posthog` and the `charts-clickhouse` repos
-        #
         extends:
             file: docker-compose.base.yml
             service: clickhouse
@@ -56,7 +45,7 @@ services:
             SITE_URL: https://analytics.limesurvey.org
             DISABLE_SECURE_SSL_REDIRECT: 'true'
             IS_BEHIND_PROXY: 'true'
-            DATABASE_URL: 'postgres://posthog:posthog@db:5432/posthog'
+            DATABASE_URL: 'postgres://${POSTGRES_POSTHOG_USER}:${POSTGRES_POSTHOG_PASSWORD}@db:5432/${POSTGRES_POSTHOG_DB}'
             CLICKHOUSE_HOST: 'clickhouse'
             CLICKHOUSE_DATABASE: 'posthog'
             CLICKHOUSE_SECURE: 'false'
@@ -65,8 +54,8 @@ services:
             REDIS_URL: 'redis://redis:6379/'
             SECRET_KEY: 138ffc6b1bb079fce13c8edb27f78cda6d4bd4325ceac439e79826f1
             PGHOST: db
-            PGUSER: posthog
-            PGPASSWORD: posthog
+            PGUSER: ${POSTGRES_POSTHOG_USER}
+            PGPASSWORD: ${POSTGRES_POSTHOG_PASSWORD}
             DEPLOYMENT: hobby
         depends_on:
             - db
@@ -95,7 +84,7 @@ services:
         command: ./bin/plugin-server --no-restart-loop
         restart: on-failure
         environment:
-            DATABASE_URL: 'postgres://posthog:posthog@db:5432/posthog'
+            DATABASE_URL: 'postgres://${POSTGRES_POSTHOG_USER}:${POSTGRES_POSTHOG_PASSWORD}@db:5432/${POSTGRES_POSTHOG_DB}'
             KAFKA_HOSTS: 'kafka:9092'
             REDIS_URL: 'redis://redis:6379/'
             CLICKHOUSE_HOST: 'clickhouse'

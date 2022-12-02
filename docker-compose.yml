@@ -24,12 +24,12 @@ services:
         ports:
             - '127.0.0.1:8123:8123'
             - '127.0.0.1:8443:8443'
+            - '127.0.0.1:9000:9000'
             - '127.0.0.1:9004:9004'
         volumes:
             - ./posthog/posthog/idl:/idl
             - ./posthog/docker/clickhouse/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
-            - ./posthog/docker/clickhouse/config.xml:/etc/clickhouse-server/config.xml
-            - ./posthog/docker/clickhouse/users.xml:/etc/clickhouse-server/users.xml
+            - ./volumes/clickhouse-server:/etc/clickhouse-server
             - ./volumes/clickhouse-data:/var/lib/clickhouse
     zookeeper:
         extends:
@@ -109,7 +109,7 @@ services:
             service: object_storage
         restart: on-failure
         ports:
-            - '127.0.0.1:9000:9000'
+            - '127.0.0.1:19000:9000'
         volumes:
             - ./volumes/object_storage:/data
 

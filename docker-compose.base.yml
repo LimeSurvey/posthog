@@ -10,9 +10,10 @@ services:
         image: postgres:12-alpine
         restart: on-failure
         environment:
-            POSTGRES_USER: posthog
-            POSTGRES_DB: posthog
-            POSTGRES_PASSWORD: posthog
+            POSTGRES_USER: ${POSTGRES_POSTHOG_USER}
+            POSTGRES_DB: ${POSTGRES_POSTHOG_DB}
+            POSTGRES_PASSWORD: ${POSTGRES_POSTHOG_PASSWORD}
+        command: postgres -c 'max_connections=1000'
 
     redis:
         image: redis:6.2.7-alpine
@@ -50,14 +51,15 @@ services:
         image: minio/minio:RELEASE.2022-06-25T15-50-16Z
         restart: on-failure
         environment:
-            MINIO_ROOT_USER: object_storage_root_user
-            MINIO_ROOT_PASSWORD: object_storage_root_password
+            MINIO_ROOT_USER: ${OBJECT_STORAGE_ACCESS_KEY_ID}
+            MINIO_ROOT_PASSWORD: ${OBJECT_STORAGE_SECRET_ACCESS_KEY}
         entrypoint: sh
         command: -c 'mkdir -p /data/posthog && minio server --address ":19000" --console-address ":19001" /data' # create the 'posthog' bucket before starting the service
 
     maildev:
         image: maildev/maildev:2.0.5
         restart: on-failure
+    # Not used here, please look to docker-compose.hobby.yml / docker-compose.yml
     worker: &worker
         command: ./bin/docker-worker-celery --with-scheduler
         restart: on-failure
@@ -81,12 +83,12 @@ services:
             - clickhouse
             - kafka
             - object_storage
-
+    # Not used here, please look to docker-compose.hobby.yml / docker-compose.yml
     web:
         <<: *worker
         command: /compose/start
         restart: on-failure
-
+    # Not used here, please look to docker-compose.hobby.yml / docker-compose.yml
     plugins:
         command: ./bin/plugin-server --no-restart-loop
         restart: on-failure
@@ -101,7 +103,7 @@ services:
             - clickhouse
             - kafka
             - object_storage
-
+    # Not used here, please look to docker-compose.hobby.yml / docker-compose.yml
     asyncmigrationscheck:
         <<: *worker
         command: python manage.py run_async_migrations --check

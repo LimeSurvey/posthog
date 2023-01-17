@@ -10,12 +10,16 @@ services:
         extends:
             file: docker-compose.base.yml
             service: db
+        ports:
+            - '127.0.0.1:5432:5432'
         volumes:
-            - postgres-data:/var/lib/postgresql/data
+            - ./volumes/postgres-data:/var/lib/postgresql/data
     redis:
         extends:
             file: docker-compose.base.yml
             service: redis
+        ports:
+            - '127.0.0.1:6379:6379'
     clickhouse:
         #
         # Note: please keep the default version in sync across
@@ -28,55 +32,62 @@ services:
         depends_on:
             - kafka
             - zookeeper
+        ports:
+            - '127.0.0.1:8123:8123'
+            - '127.0.0.1:8443:8443'
+            - '127.0.0.1:9000:9000'
+            - '127.0.0.1:9004:9004'
         volumes:
             - ./posthog/posthog/idl:/idl
             - ./posthog/docker/clickhouse/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
-            - ./posthog/docker/clickhouse/config.xml:/etc/clickhouse-server/config.xml
-            - ./posthog/docker/clickhouse/users.xml:/etc/clickhouse-server/users.xml
-            - clickhouse-data:/var/lib/clickhouse
+            - ./volumes/clickhouse-server:/etc/clickhouse-server
+            - ./volumes/clickhouse-data:/var/lib/clickhouse
     zookeeper:
         extends:
             file: docker-compose.base.yml
             service: zookeeper
         volumes:
-            - zookeeper-datalog:/datalog
-            - zookeeper-data:/data
-            - zookeeper-logs:/logs
+            - ./volumes/zookeeper-datalog:/datalog
+            - ./volumes/zookeeper-data:/data
+            - ./volumes/zookeeper-logs:/logs
     kafka:
         extends:
             file: docker-compose.base.yml
             service: kafka
 
-    worker:
-        extends:
-            file: docker-compose.base.yml
-            service: worker
+    worker: &worker
+        image: posthog/posthog:latest-release
+        command: ./bin/docker-worker-celery --with-scheduler
+        restart: on-failure
         environment:
-            SENTRY_DSN: $SENTRY_DSN
-            SITE_URL: https://$DOMAIN
-            SECRET_KEY: $POSTHOG_SECRET
-        image: posthog/posthog:$POSTHOG_APP_TAG
+            SENTRY_DSN: 'https://public@sentry.example.com/1'
+            SITE_URL: https://analytics.limesurvey.org
+            DISABLE_SECURE_SSL_REDIRECT: 'true'
+            IS_BEHIND_PROXY: 'true'
+            DATABASE_URL: 'postgres://${POSTGRES_POSTHOG_USER}:${POSTGRES_POSTHOG_PASSWORD}@db:5432/${POSTGRES_POSTHOG_DB}'
+            CLICKHOUSE_HOST: 'clickhouse'
+            CLICKHOUSE_DATABASE: 'posthog'
+            CLICKHOUSE_SECURE: 'false'
+            CLICKHOUSE_VERIFY: 'false'
+            KAFKA_URL: 'kafka://kafka'
+            REDIS_URL: 'redis://redis:6379/'
+            SECRET_KEY: 138ffc6b1bb079fce13c8edb27f78cda6d4bd4325ceac439e79826f1
+            PGHOST: db
+            PGUSER: ${POSTGRES_POSTHOG_USER}
+            PGPASSWORD: ${POSTGRES_POSTHOG_PASSWORD}
+            DEPLOYMENT: hobby
+        depends_on:
+            - db
+            - redis
+            - clickhouse
+            - kafka
+            - object_storage
     web:
-        extends:
-            file: docker-compose.base.yml
-            service: web
+        <<: *worker
+        command: /compose/start
+        restart: on-failure
         volumes:
             - ./compose:/compose
-        image: posthog/posthog:$POSTHOG_APP_TAG
-        environment:
-            SENTRY_DSN: $SENTRY_DSN
-            SITE_URL: https://$DOMAIN
-            SECRET_KEY: $POSTHOG_SECRET
-    plugins:
-        extends:
-            file: docker-compose.base.yml
-            service: plugins
-        image: posthog/posthog:$POSTHOG_APP_TAG
-        environment:
-            SENTRY_DSN: $SENTRY_DSN
-            SITE_URL: https://$DOMAIN
-            SECRET_KEY: $POSTHOG_SECRET
-
     caddy:
         image: caddy:2.6.1
         restart: unless-stopped
@@ -87,13 +98,31 @@ services:
             - ./Caddyfile:/etc/caddy/Caddyfile
         depends_on:
             - web
+    plugins:
+        image: posthog/posthog:latest-release
+        command: ./bin/plugin-server --no-restart-loop
+        restart: on-failure
+        environment:
+            DATABASE_URL: 'postgres://${POSTGRES_POSTHOG_USER}:${POSTGRES_POSTHOG_PASSWORD}@db:5432/${POSTGRES_POSTHOG_DB}'
+            KAFKA_HOSTS: 'kafka:9092'
+            REDIS_URL: 'redis://redis:6379/'
+            CLICKHOUSE_HOST: 'clickhouse'
+        depends_on:
+            - db
+            - redis
+            - clickhouse
+            - kafka
+            - object_storage
+
     object_storage:
         extends:
             file: docker-compose.base.yml
             service: object_storage
         restart: on-failure
+        ports:
+            - '127.0.0.1:19000:9000'
         volumes:
-            - object_storage:/data
+            - ./volumes/object_storage:/data
 
     asyncmigrationscheck:
         extends:
@@ -101,14 +130,7 @@ services:
             service: asyncmigrationscheck
         image: posthog/posthog:$POSTHOG_APP_TAG
         environment:
-            SENTRY_DSN: $SENTRY_DSN
-            SITE_URL: https://$DOMAIN
-            SECRET_KEY: $POSTHOG_SECRET
+            SENTRY_DSN: 'https://public@sentry.example.com/1'
+            SITE_URL: https://analytics.limesurvey.org
+            SECRET_KEY: 138ffc6b1bb079fce13c8edb27f78cda6d4bd4325ceac439e79826f1
 
-volumes:
-    zookeeper-data:
-    zookeeper-datalog:
-    zookeeper-logs:
-    object_storage:
-    postgres-data:
-    clickhouse-data:

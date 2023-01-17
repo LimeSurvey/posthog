@@ -128,7 +128,7 @@ services:
         extends:
             file: docker-compose.base.yml
             service: asyncmigrationscheck
-        image: posthog/posthog:$POSTHOG_APP_TAG
+        image: posthog/posthog:latest-release
         environment:
             SENTRY_DSN: 'https://public@sentry.example.com/1'
             SITE_URL: https://analytics.limesurvey.org

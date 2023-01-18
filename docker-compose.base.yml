@@ -27,9 +27,6 @@ services:
         #
         image: ${CLICKHOUSE_SERVER_IMAGE:-clickhouse/clickhouse-server:22.3}
         restart: on-failure
-        depends_on:
-            - kafka
-            - zookeeper
     zookeeper:
         image: zookeeper:3.7.0
         restart: on-failure
@@ -37,8 +34,6 @@ services:
     kafka:
         image: bitnami/kafka:2.8.1-debian-10-r99
         restart: on-failure
-        depends_on:
-            - zookeeper
         environment:
             KAFKA_BROKER_ID: 1001
             KAFKA_CFG_RESERVED_BROKER_MAX_ID: 1001

@@ -1,0 +1,25 @@
+#!/bin/bash
+POSTGRES_FILE=postgres_$(date +"%m-%d-%y_%H-%M").gz
+VOLUMES_FILE=volumes_$(date +"%m-%d-%y_%H-%M").tar.gz
+
+#docker exec posthog_db_1 pg_dump --username=posthog --dbname=posthog | gzip > backup/$POSTGRES_FILE
+#tar -cvzf backup/$VOLUMES_FILE volumes/
+
+cd backup
+
+HOST=u234538.your-storagebox.de
+USER=u234538-sub22
+PASSWORD=pjBWQfCptqxxPT3J
+ftp -inv $HOST <<EOF
+user $USER $PASSWORD
+cd limesurvey-6
+awk -v cutoff="$(date -d "5 days ago" +%s)" '{line=$0; "date -d \""$6" " $7" " $8 "\" +%s" |getline; fdate=$1} fdate < cutoff {print line} ' ftptimes
+mput *.gz
+bye
+EOF
+
+rm *.gz -f
+
+cd ..
+
+echo "Successful backup for $POSTGRES_FILE and $VOLUMES_FILE"

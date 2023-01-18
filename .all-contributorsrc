@@ -1466,6 +1466,15 @@
       ]
     },
     {
+      "login": "Ismaaa",
+      "name": "Ismail D.",
+      "avatar_url": "https://avatars.githubusercontent.com/u/22240843?v=4",
+      "profile": "https://github.com/Ismaaa",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
       "login": "bryanyi",
       "name": "bryanyi",
       "avatar_url": "https://avatars.githubusercontent.com/u/66971225?v=4",
@@ -2319,6 +2328,15 @@
       "name": "Xavier Vello",
       "avatar_url": "https://avatars.githubusercontent.com/u/6241083?v=4",
       "profile": "https://xvello.net",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "johanholmerin",
+      "name": "Johan Holmerin",
+      "avatar_url": "https://avatars.githubusercontent.com/u/7433263?v=4",
+      "profile": "https://github.com/johanholmerin",
       "contributions": [
         "code"
       ]

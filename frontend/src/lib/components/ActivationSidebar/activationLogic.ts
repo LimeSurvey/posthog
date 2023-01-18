@@ -13,8 +13,6 @@ import type { activationLogicType } from './activationLogicType'
 import { urls } from 'scenes/urls'
 import { savedInsightsLogic } from 'scenes/saved-insights/savedInsightsLogic'
 import { dashboardsModel } from '~/models/dashboardsModel'
-import { featureFlagLogic } from 'lib/logic/featureFlagLogic'
-import { FEATURE_FLAGS } from 'lib/constants'
 
 export enum ActivationTasks {
     IngestFirstEvent = 'ingest_first_event',
@@ -56,18 +54,22 @@ export const activationLogic = kea<activationLogicType>([
             ['insights'],
             dashboardsModel,
             ['rawDashboards'],
-            featureFlagLogic,
-            ['featureFlags'],
         ],
         actions: [
+            membersLogic,
+            ['loadMembersSuccess', 'loadMembersFailure'],
             inviteLogic,
-            ['showInviteModal'],
+            ['showInviteModal', 'loadInvitesSuccess', 'loadInvitesFailure'],
+            pluginsLogic,
+            ['loadPluginsSuccess', 'loadPluginsFailure'],
             navigationLogic,
             ['toggleActivationSideBar', 'showActivationSideBar', 'hideActivationSideBar'],
             eventUsageLogic,
             ['reportActivationSideBarShown'],
             savedInsightsLogic,
             ['loadInsights', 'loadInsightsSuccess', 'loadInsightsFailure'],
+            dashboardsModel,
+            ['loadDashboardsSuccess', 'loadDashboardsFailure'],
         ],
     })),
     actions({
@@ -93,18 +95,46 @@ export const activationLogic = kea<activationLogicType>([
                 setShowSessionRecordingConfig: (_, { value }) => value,
             },
         ],
+        areMembersLoaded: [
+            false,
+            {
+                loadMembersSuccess: () => true,
+                loadMembersFailure: () => false,
+            },
+        ],
+        areInvitesLoaded: [
+            false,
+            {
+                loadInvitesSuccess: () => true,
+                loadInvitesFailure: () => false,
+            },
+        ],
+        arePluginsLoaded: [
+            false,
+            {
+                loadPluginsSuccess: () => true,
+                loadPluginsFailure: () => false,
+            },
+        ],
+        areDashboardsLoaded: [
+            false,
+            {
+                loadDashboardsSuccess: () => true,
+                loadDashboardsFailure: () => false,
+            },
+        ],
         areCustomEventsLoaded: [
             false,
             {
                 loadCustomEventsSuccess: () => true,
-                loadCustomEventsFailure: () => true,
+                loadCustomEventsFailure: () => false,
             },
         ],
         areInsightsLoaded: [
             false,
             {
                 loadInsightsSuccess: () => true,
-                loadInsightsFailure: () => true,
+                loadInsightsFailure: () => false,
             },
         ],
     })),
@@ -133,14 +163,35 @@ export const activationLogic = kea<activationLogicType>([
         ],
     })),
     selectors({
-        shouldShowSecondaryOnboarding: [
-            (s) => [s.featureFlags],
-            (featureFlags) => featureFlags[FEATURE_FLAGS.SECONDARY_ONBOARDING_EXPERIMENT] === 'test',
-        ],
         isReady: [
-            (s) => [s.areCustomEventsLoaded, s.areInsightsLoaded, s.shouldShowSecondaryOnboarding],
-            (areCustomEventsLoaded, areInsightsLoaded, shouldShowSecondaryOnboarding) =>
-                shouldShowSecondaryOnboarding && areCustomEventsLoaded && areInsightsLoaded,
+            (s) => [
+                s.currentTeam,
+                s.areMembersLoaded,
+                s.areInvitesLoaded,
+                s.areDashboardsLoaded,
+                s.arePluginsLoaded,
+                s.areCustomEventsLoaded,
+                s.areInsightsLoaded,
+            ],
+            (
+                currentTeam,
+                areMembersLoaded,
+                areInvitesLoaded,
+                areDashboardsLoaded,
+                arePluginsLoaded,
+                areCustomEventsLoaded,
+                areInsightsLoaded
+            ) => {
+                return (
+                    !!currentTeam &&
+                    areCustomEventsLoaded &&
+                    areInsightsLoaded &&
+                    areMembersLoaded &&
+                    areInvitesLoaded &&
+                    areDashboardsLoaded &&
+                    arePluginsLoaded
+                )
+            },
         ],
         currentTeamSkippedTasks: [
             (s) => [s.skippedTasks, s.currentTeam],
@@ -216,7 +267,7 @@ export const activationLogic = kea<activationLogicType>([
                         case ActivationTasks.SetupSessionRecordings:
                             tasks.push({
                                 id: ActivationTasks.SetupSessionRecordings,
-                                name: 'Setup session recordings',
+                                name: 'Set up session recordings',
                                 description: 'See how your users are using your product',
                                 completed: currentTeam?.session_recording_opt_in ?? false,
                                 canSkip: true,
@@ -319,21 +370,15 @@ export const activationLogic = kea<activationLogicType>([
             )
         },
     })),
-    events(({ actions, values }) => ({
+    events(({ actions }) => ({
         afterMount: () => {
-            if (values.shouldShowSecondaryOnboarding) {
-                // we artificially wait for a second so that the UI has time to render before we check for these async values
-                // this prevents the UI from flickering when the values are loaded
-                setTimeout(() => {
-                    actions.loadCustomEvents()
-                    actions.loadInsights()
-                }, 1000)
-            }
+            actions.loadCustomEvents()
+            actions.loadInsights()
         },
     })),
     urlToAction(({ actions, values }) => ({
         '*': (_, params) => {
-            if (values.shouldShowSecondaryOnboarding && params?.onboarding_completed && !values.hasCompletedAllTasks) {
+            if (params?.onboarding_completed && !values.hasCompletedAllTasks) {
                 actions.toggleActivationSideBar()
             } else {
                 actions.hideActivationSideBar()

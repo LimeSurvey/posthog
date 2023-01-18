@@ -191,28 +191,22 @@ def report_organization_deleted(user: User, organization: Organization):
     )
 
 
-def report_first_ingestion_reminder_email_sent(user: User):
-    posthoganalytics.capture(
-        user.distinct_id,
-        "first ingestion reminder email sent",
-        groups=groups(user.current_organization, user.current_team),
-    )
-
-
-def report_second_ingestion_reminder_email_sent(user: User):
-    posthoganalytics.capture(
-        user.distinct_id,
-        "second ingestion reminder email sent",
-        groups=groups(user.current_organization, user.current_team),
-    )
-
-
 def groups(organization: Optional[Organization] = None, team: Optional[Team] = None):
     result = {"instance": SITE_URL}
     if organization is not None:
         result["organization"] = str(organization.pk)
         if organization.customer_id:
             result["customer"] = organization.customer_id
+    elif team is not None and team.organization_id:
+        result["organization"] = str(team.organization_id)
+
     if team is not None:
         result["project"] = str(team.uuid)
     return result
+
+
+def report_team_action(team: Team, event: str, properties: Dict = {}):
+    """
+    For capturing events where it is unclear which user was the core actor we can use the team instead
+    """
+    posthoganalytics.capture(str(team.uuid), event, properties=properties, groups=groups(team=team))

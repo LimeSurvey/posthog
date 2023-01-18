@@ -14,9 +14,7 @@ export function TeamInvitedPanel(): JSX.Element {
     return (
         <div>
             <h1 className="ingestion-title">Help is on the way!</h1>
-            <p className="prompt-text">
-                You can still explore all PostHog has to offer while you wait for your team members to join.
-            </p>
+            <p className="prompt-text">You can still explore PostHog while you wait for your team members to join.</p>
             <LemonDivider thick dashed className="my-6" />
             <div className="flex flex-col mb-6">
                 <DemoProjectButton

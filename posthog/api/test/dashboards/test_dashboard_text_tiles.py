@@ -74,12 +74,9 @@ class TestDashboardTiles(APIBaseTest, QueryMatchingTest):
                 text_id=text_id,
                 last_modified_at=last_modified_at,
             ),
-            "refresh_attempt": None,
-            "refreshing": None,
             "last_refresh": None,
             "is_cached": False,
             "insight": None,
-            "filters_hash": None,
         }
 
     @staticmethod
@@ -165,10 +162,10 @@ class TestDashboardTiles(APIBaseTest, QueryMatchingTest):
         dashboard_id, dashboard_json = self.dashboard_api.update_text_tile(dashboard_id, updated_tile)
 
         assert len(dashboard_json["tiles"]) == 2
-        assert [(t["id"], t["color"]) for t in dashboard_json["tiles"]] == [
+        assert set((t["id"], t["color"]) for t in dashboard_json["tiles"]) == {
             (tile_ids[0], "purple"),
             (tile_ids[1], None),
-        ]
+        }
 
     def test_can_remove_text_tiles_from_dashboard(self) -> None:
         dashboard_id, _ = self.dashboard_api.create_dashboard({"name": "dashboard"})

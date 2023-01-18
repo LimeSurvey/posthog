@@ -1,7 +1,7 @@
 import { actions, connect, events, kea, listeners, path, reducers, selectors } from 'kea'
 import api from 'lib/api'
 import type { teamLogicType } from './teamLogicType'
-import { CorrelationConfigType, TeamType } from '~/types'
+import { CorrelationConfigType, PropertyOperator, TeamType } from '~/types'
 import { userLogic } from './userLogic'
 import { identifierToHuman, isUserLoggedIn, resolveWebhookService } from 'lib/utils'
 import { organizationLogic } from './organizationLogic'
@@ -11,7 +11,7 @@ import { IconSwapHoriz } from 'lib/components/icons'
 import { loaders } from 'kea-loaders'
 import { OrganizationMembershipLevel } from '../lib/constants'
 import { eventUsageLogic } from 'lib/utils/eventUsageLogic'
-import { systemStatusLogic } from './instance/SystemStatus/systemStatusLogic'
+import { getPropertyLabel } from 'lib/components/PropertyKeyInfo'
 
 const parseUpdatedAttributeName = (attr: string | null): string => {
     if (attr === 'slack_incoming_webhook') {
@@ -27,7 +27,6 @@ export const teamLogic = kea<teamLogicType>([
     path(['scenes', 'teamLogic']),
     connect({
         actions: [userLogic, ['loadUser']],
-        values: [systemStatusLogic, ['instanceSettings']],
     }),
     actions({
         deleteTeam: (team: TeamType) => ({ team }),
@@ -111,11 +110,6 @@ export const teamLogic = kea<teamLogicType>([
             (currentTeam, currentTeamLoading): boolean =>
                 !currentTeam?.effective_membership_level && !currentTeamLoading,
         ],
-        sentryIntegrationEnabled: [
-            (selectors) => [selectors.instanceSettings],
-            (instanceSettings): boolean =>
-                instanceSettings?.filter((setting) => setting.key.startsWith('SENTRY') && setting.value).length > 0,
-        ],
         demoOnlyProject: [
             (selectors) => [selectors.currentTeam, organizationLogic.selectors.currentOrganization],
             (currentTeam, currentOrganization): boolean =>
@@ -140,6 +134,44 @@ export const teamLogic = kea<teamLogicType>([
                 !!currentTeam?.effective_membership_level &&
                 currentTeam.effective_membership_level >= OrganizationMembershipLevel.Admin,
         ],
+        testAccountFilterWarningLabels: [
+            (selectors) => [selectors.currentTeam],
+            (currentTeam) => {
+                if (!currentTeam) {
+                    return null
+                }
+                const positiveFilterOperators = [
+                    PropertyOperator.Exact,
+                    PropertyOperator.IContains,
+                    PropertyOperator.Regex,
+                    PropertyOperator.IsSet,
+                ]
+                const positiveFilters = []
+                for (const filter of currentTeam.test_account_filters) {
+                    if (
+                        'operator' in filter &&
+                        !!filter.operator &&
+                        positiveFilterOperators.includes(filter.operator)
+                    ) {
+                        positiveFilters.push(filter)
+                    }
+                }
+
+                return positiveFilters.map((filter) => {
+                    if (!!filter.type && !!filter.key) {
+                        // person properties can be checked for a label as if they were event properties
+                        // so, we can check each acceptable type and see if it returns a value
+                        return (
+                            getPropertyLabel(filter.key, 'event') ||
+                            getPropertyLabel(filter.key, 'element') ||
+                            filter.key
+                        )
+                    } else {
+                        return filter.key
+                    }
+                })
+            },
+        ],
     }),
     listeners(({ actions }) => ({
         deleteTeam: async ({ team }) => {
@@ -153,13 +185,6 @@ export const teamLogic = kea<teamLogicType>([
         },
         deleteTeamSuccess: () => {
             lemonToast.success('Project has been deleted')
-        },
-        createTeamSuccess: ({ currentTeam }) => {
-            if (window.location.href.includes('/ingestion') && currentTeam.is_demo) {
-                window.location.href = '/'
-            } else {
-                window.location.href = '/ingestion'
-            }
         },
     })),
     events(({ actions }) => ({

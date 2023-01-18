@@ -18,9 +18,10 @@ class SessionRecordingPlaylist(models.Model):
     created_by: models.ForeignKey = models.ForeignKey("User", on_delete=models.SET_NULL, null=True, blank=True)
     last_modified_at: models.DateTimeField = models.DateTimeField(default=timezone.now)
     last_modified_by: models.ForeignKey = models.ForeignKey(
-        "User", on_delete=models.SET_NULL, null=True, blank=True, related_name="modified_recordings"
+        "User", on_delete=models.SET_NULL, null=True, blank=True, related_name="modified_playlists"
     )
 
+    # DEPRECATED
     is_static: models.BooleanField = models.BooleanField(default=False)
 
     # Changing these fields materially alters the Playlist, so these count for the "last_modified_*" fields

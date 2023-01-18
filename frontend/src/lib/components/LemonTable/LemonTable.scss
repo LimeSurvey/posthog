@@ -35,7 +35,8 @@
         border-bottom: none;
     }
     .row-name {
-        display: block;
+        display: flex;
+        align-items: center;
         font-size: 0.875rem;
         font-weight: 600;
         margin-bottom: 0.125rem;
@@ -101,6 +102,16 @@
                 padding-left: 1rem;
                 overflow: hidden;
                 text-overflow: ellipsis;
+                .LemonTable--inset & {
+                    padding-left: 0.5rem;
+                }
+                &.LemonTable__boundary,
+                &:last-child {
+                    padding-right: 1rem;
+                    .LemonTable--inset & {
+                        padding-right: 0.5rem;
+                    }
+                }
                 &[colspan='0'] {
                     // Hidden cells should not affect the width of the table
                     padding-left: 0 !important;
@@ -109,12 +120,8 @@
                 &.LemonTable__ribbon {
                     padding: 0 0.25rem 0 0 !important;
                 }
-                &.LemonTable__boundary:not(:last-child) {
+                &.LemonTable__boundary:not(:last-of-type) {
                     border-right: 1px solid var(--border);
-                }
-                &.LemonTable__boundary,
-                &:last-child {
-                    padding-right: 1rem;
                 }
             }
         }
@@ -148,5 +155,6 @@
 .LemonTable__header-content {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     line-height: 1.5;
 }

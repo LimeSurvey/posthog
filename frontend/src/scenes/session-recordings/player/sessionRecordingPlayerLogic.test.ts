@@ -6,13 +6,13 @@ import {
     parseMetadataResponse,
     sessionRecordingDataLogic,
 } from 'scenes/session-recordings/player/sessionRecordingDataLogic'
-import { sharedListLogic } from 'scenes/session-recordings/player/list/sharedListLogic'
 import { playerSettingsLogic } from 'scenes/session-recordings/player/playerSettingsLogic'
 import { useMocks } from '~/mocks/jest'
 import recordingSnapshotsJson from 'scenes/session-recordings/__mocks__/recording_snapshots.json'
 import recordingMetaJson from 'scenes/session-recordings/__mocks__/recording_meta.json'
 import recordingEventsJson from 'scenes/session-recordings/__mocks__/recording_events.json'
 import { resumeKeaLoadersErrors, silenceKeaLoadersErrors } from '~/initKea'
+import { featureFlagLogic } from 'lib/logic/featureFlagLogic'
 
 describe('sessionRecordingPlayerLogic', () => {
     let logic: ReturnType<typeof sessionRecordingPlayerLogic.build>
@@ -20,12 +20,13 @@ describe('sessionRecordingPlayerLogic', () => {
     beforeEach(() => {
         useMocks({
             get: {
-                '/api/projects/:team/session_recordings/:id/snapshots': { result: recordingSnapshotsJson },
-                '/api/projects/:team/session_recordings/:id': { result: recordingMetaJson },
+                '/api/projects/:team/session_recordings/:id/snapshots': recordingSnapshotsJson,
+                '/api/projects/:team/session_recordings/:id': recordingMetaJson,
                 '/api/projects/:team/events': { results: recordingEventsJson },
             },
         })
         initKeaTests()
+        featureFlagLogic.mount()
         logic = sessionRecordingPlayerLogic({ sessionRecordingId: '2', playerKey: 'test' })
         logic.mount()
     })
@@ -35,7 +36,6 @@ describe('sessionRecordingPlayerLogic', () => {
             await expectLogic(logic).toMount([
                 eventUsageLogic,
                 sessionRecordingDataLogic({ sessionRecordingId: '2' }),
-                sharedListLogic({ sessionRecordingId: '2', playerKey: 'test' }),
                 playerSettingsLogic,
             ])
         })
@@ -73,7 +73,7 @@ describe('sessionRecordingPlayerLogic', () => {
             expectLogic(logic).toMatchValues({
                 sessionPlayerData: {
                     person: recordingMetaJson.person,
-                    metadata: parseMetadataResponse(recordingMetaJson.session_recording),
+                    metadata: parseMetadataResponse(recordingMetaJson),
                     snapshotsByWindowId: {},
                     bufferedTo: null,
                 },

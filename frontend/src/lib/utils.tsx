@@ -5,6 +5,7 @@ import {
     ActionType,
     ActorType,
     AnyCohortCriteriaType,
+    AnyFilterType,
     AnyPropertyFilter,
     BehavioralCohortType,
     BehavioralEventType,
@@ -13,7 +14,6 @@ import {
     DateMappingOption,
     EventType,
     FilterLogicalOperator,
-    FilterType,
     GroupActorType,
     IntervalType,
     PropertyFilter,
@@ -27,7 +27,7 @@ import {
 import * as Sentry from '@sentry/react'
 import equal from 'fast-deep-equal'
 import { tagColors } from 'lib/colors'
-import { WEBHOOK_SERVICES } from 'lib/constants'
+import { NON_TIME_SERIES_DISPLAY_TYPES, WEBHOOK_SERVICES } from 'lib/constants'
 import { KeyMappingInterface } from 'lib/components/PropertyKeyInfo'
 import { AlignType } from 'rc-trigger/lib/interface'
 import { dayjs } from 'lib/dayjs'
@@ -95,13 +95,13 @@ export function areObjectValuesEmpty(obj?: Record<string, any>): boolean {
 // taken from https://stackoverflow.com/questions/10420352/converting-file-size-in-bytes-to-human-readable-string/10420404
 export const humanizeBytes = (fileSizeInBytes: number): string => {
     let i = -1
-    const byteUnits = [' kB', ' MB', ' GB', ' TB', 'PB', 'EB', 'ZB', 'YB']
+    const byteUnits = ['kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
     do {
         fileSizeInBytes = fileSizeInBytes / 1024
         i++
     } while (fileSizeInBytes > 1024)
 
-    return Math.max(fileSizeInBytes, 0.1).toFixed(1) + byteUnits[i]
+    return Math.max(fileSizeInBytes, 0.1).toFixed(1) + ' ' + byteUnits[i]
 }
 
 export function toParams(obj: Record<string, any>, explodeArrays: boolean = false): string {
@@ -396,7 +396,7 @@ export function objectsEqual(obj1: any, obj2: any): boolean {
 }
 
 // https://stackoverflow.com/questions/25421233/javascript-removing-undefined-fields-from-an-object
-export function objectClean(obj: Record<string, any>): Record<string, any> {
+export function objectClean<T extends Record<string | number | symbol, unknown>>(obj: T): T {
     const response = { ...obj }
     Object.keys(response).forEach((key) => {
         if (response[key] === undefined) {
@@ -459,11 +459,22 @@ export function slugify(text: string): string {
         .replace(/--+/g, '-')
 }
 
-/** Format number with space as the thousands separator. */
+/** Format number with comma as the thousands separator. */
 export function humanFriendlyNumber(d: number, precision: number = 2): string {
     return d.toLocaleString('en-US', { maximumFractionDigits: precision })
 }
 
+export const humanFriendlyMilliseconds = (timestamp: number | undefined): string | undefined => {
+    if (typeof timestamp !== 'number') {
+        return undefined
+    }
+
+    if (timestamp < 1000) {
+        return `${Math.ceil(timestamp)}ms`
+    }
+
+    return `${(timestamp / 1000).toFixed(2)}s`
+}
 export function humanFriendlyDuration(d: string | number | null | undefined, maxUnits?: number): string {
     // Convert `d` (seconds) to a human-readable duration string.
     // Example: `1d 10hrs 9mins 8s`
@@ -497,8 +508,8 @@ export function humanFriendlyDiff(from: dayjs.Dayjs | string, to: dayjs.Dayjs | 
 
 export function humanFriendlyDetailedTime(
     date: dayjs.Dayjs | string | null,
-    formatDate = 'MMMM DD, YYYY',
-    formatTime = 'h:mm:ss A'
+    formatDate = 'MMMM DD, YYYY',
+    formatTime = 'h:mm:ss A'
 ): string {
     if (!date) {
         return 'Never'
@@ -511,9 +522,9 @@ export function humanFriendlyDetailedTime(
     }
     let formatString: string
     if (parsedDate.isSame(today, 'd')) {
-        formatString = `[Today] ${formatTime}`
+        formatString = `[Today] ${formatTime}`
     } else if (parsedDate.isSame(yesterday, 'd')) {
-        formatString = `[Yesterday] ${formatTime}`
+        formatString = `[Yesterday] ${formatTime}`
     } else {
         formatString = `${formatDate} ${formatTime}`
     }
@@ -616,8 +627,7 @@ export function isURL(input: any): boolean {
     if (!input || typeof input !== 'string') {
         return false
     }
-    // Regex by regextester.com/115236
-    const regexp = /^(?:http(s)?:\/\/)([\w*.-])+(?:[\w*\.-]+)+([\w\-\._~:/?#[\]@%!\$&'\(\)\*\+,;=.])+$/
+    const regexp = /^http(s)?:\/\/[\w*.-]+[\w*\.-]+[\w\-\._~:/?#[\]@%!\$&'\(\)\*\+,;=.]+$/
     return !!input.trim().match(regexp)
 }
 
@@ -1139,10 +1149,14 @@ export const disableHourFor: Record<string, boolean> = {
     other: false,
 }
 
-export function autocorrectInterval(filters: Partial<FilterType>): IntervalType {
+export function autocorrectInterval(filters: Partial<AnyFilterType>): IntervalType | undefined {
+    if ('display' in filters && filters.display && NON_TIME_SERIES_DISPLAY_TYPES.includes(filters.display)) {
+        // Non-time-series insights should not have an interval
+        return undefined
+    }
     if (!filters.interval) {
         return 'day'
-    } // undefined/uninitialized
+    }
 
     // @ts-expect-error - Old legacy interval support
     const minute_disabled = filters.interval === 'minute'
@@ -1191,10 +1205,10 @@ export function roundToDecimal(value: number | null, places: number = 2): string
     return (Math.round(value * 100) / 100).toFixed(places)
 }
 
-export function sortedKeys(object: Record<string, any>): Record<string, any> {
-    const newObject: Record<string, any> = {}
+export function sortedKeys<T extends Record<string, any> = Record<string, any>>(object: T): T {
+    const newObject: T = {} as T
     for (const key of Object.keys(object).sort()) {
-        newObject[key] = object[key]
+        newObject[key as keyof T] = object[key]
     }
     return newObject
 }
@@ -1239,6 +1253,11 @@ export function humanTzOffset(timezone?: string): string {
     const hourForm = absoluteOffset === 1 ? 'hour' : 'hours'
     const direction = offset > 0 ? 'ahead' : 'behind'
     return `${absoluteOffset} ${hourForm} ${direction}`
+}
+
+/** Join array of string into a list ("a, b, and c"). Uses the Oxford comma, but only if there are at least 3 items. */
+export function humanList(arr: string[]): string {
+    return arr.length > 2 ? arr.slice(0, -1).join(', ') + ', and ' + arr.slice(-1) : arr.join(' and ')
 }
 
 export function resolveWebhookService(webhookUrl: string): string {
@@ -1522,4 +1541,23 @@ export function interleave(arr: any[], delimiter: any): any[] {
             ? [item, delimiter]
             : item
     )
+}
+
+export function downloadFile(file: File): void {
+    // Create a link and set the URL using `createObjectURL`
+    const link = document.createElement('a')
+    link.style.display = 'none'
+    link.href = URL.createObjectURL(file)
+    link.download = file.name
+
+    // It needs to be added to the DOM so it can be clicked
+    document.body.appendChild(link)
+    link.click()
+
+    // To make this work on Firefox we need to wait
+    // a little while before removing it.
+    setTimeout(() => {
+        URL.revokeObjectURL(link.href)
+        link?.parentNode?.removeChild(link)
+    }, 0)
 }

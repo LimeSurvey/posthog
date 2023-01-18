@@ -32,7 +32,7 @@ import { groupsModel } from '~/models/groupsModel'
 import { groupPropertiesModel } from '~/models/groupPropertiesModel'
 import { capitalizeFirstLetter, pluralize, toParams } from 'lib/utils'
 import { combineUrl } from 'kea-router'
-import { CohortIcon } from 'lib/components/icons'
+import { IconCohort } from 'lib/components/icons'
 import { keyMapping } from 'lib/components/PropertyKeyInfo'
 import { getEventDefinitionIcon, getPropertyDefinitionIcon } from 'scenes/data-management/events/DefinitionHeader'
 import { featureFlagsLogic } from 'scenes/feature-flags/featureFlagsLogic'
@@ -43,6 +43,8 @@ import { groupDisplayId } from 'scenes/persons/GroupActorHeader'
 import { infiniteListLogicType } from 'lib/components/TaxonomicFilter/infiniteListLogicType'
 import { featureFlagLogic } from 'lib/logic/featureFlagLogic'
 import { updatePropertyDefinitions } from '~/models/propertyDefinitionsModel'
+import { FEATURE_FLAGS } from 'lib/constants'
+import { InlineHogQLEditor } from '~/queries/QueryEditor/InlineHogQLEditor'
 
 export const eventTaxonomicGroupProps: Pick<TaxonomicFilterGroup, 'getPopupHeader' | 'getIcon'> = {
     getPopupHeader: (eventDefinition: EventDefinition): string => {
@@ -149,14 +151,23 @@ export const taxonomicFilterLogic = kea<taxonomicFilterLogicType>({
                 selectors.groupAnalyticsTaxonomicGroupNames,
                 selectors.eventNames,
                 selectors.excludedProperties,
+                featureFlagLogic.selectors.featureFlags,
             ],
             (
                 teamId,
                 groupAnalyticsTaxonomicGroups,
                 groupAnalyticsTaxonomicGroupNames,
                 eventNames,
-                excludedProperties
+                excludedProperties,
+                featureFlags
             ): TaxonomicFilterGroup[] => {
+                const hogQl: TaxonomicFilterGroup = {
+                    name: 'HogQL',
+                    searchPlaceholder: 'HogQL',
+                    type: TaxonomicFilterGroupType.HogQLExpression,
+                    render: InlineHogQLEditor,
+                    getPopupHeader: () => 'HogQL',
+                }
                 return [
                     {
                         name: 'Events',
@@ -279,7 +290,7 @@ export const taxonomicFilterLogic = kea<taxonomicFilterLogicType>({
                         getValue: (cohort: CohortType) => cohort.id,
                         getPopupHeader: (cohort: CohortType) => `${cohort.is_static ? 'Static' : 'Dynamic'} Cohort`,
                         getIcon: function _getIcon(): JSX.Element {
-                            return <CohortIcon className="taxonomy-icon taxonomy-icon-muted" />
+                            return <IconCohort className="taxonomy-icon taxonomy-icon-muted" />
                         },
                     },
                     {
@@ -292,7 +303,7 @@ export const taxonomicFilterLogic = kea<taxonomicFilterLogicType>({
                         getValue: (cohort: CohortType) => cohort.id,
                         getPopupHeader: () => `All Users`,
                         getIcon: function _getIcon(): JSX.Element {
-                            return <CohortIcon className="taxonomy-icon taxonomy-icon-muted" />
+                            return <IconCohort className="taxonomy-icon taxonomy-icon-muted" />
                         },
                     },
                     {
@@ -409,6 +420,7 @@ export const taxonomicFilterLogic = kea<taxonomicFilterLogicType>({
                         getValue: (option) => option.value,
                         getPopupHeader: () => 'Session',
                     },
+                    ...(featureFlags[FEATURE_FLAGS.HOGQL_EXPRESSIONS] ? [hogQl] : []),
                     ...groupAnalyticsTaxonomicGroups,
                     ...groupAnalyticsTaxonomicGroupNames,
                 ]

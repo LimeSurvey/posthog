@@ -20,6 +20,7 @@ import {
     PluginsServerConfig,
     PropertyType,
     PropertyUpdateOperation,
+    RawPerformanceEvent,
     Team,
 } from '../../src/types'
 import { createHub } from '../../src/utils/db/hub'
@@ -287,6 +288,7 @@ test('capture new person', async () => {
         ],
     })
 
+    const uuid = new UUIDT().toString()
     await processEvent(
         '2',
         '127.0.0.1',
@@ -297,13 +299,14 @@ test('capture new person', async () => {
         } as any as PluginEvent,
         team.id,
         now,
-        new UUIDT().toString()
+        uuid
     )
 
     let persons = await hub.db.fetchPersons()
     expect(persons[0].version).toEqual(0)
     expect(persons[0].created_at).toEqual(now)
     let expectedProps = {
+        $creator_event_uuid: uuid,
         $initial_browser: 'Chrome',
         $initial_browser_version: '95',
         $initial_utm_medium: 'twitter',
@@ -382,6 +385,7 @@ test('capture new person', async () => {
     expect(persons.length).toEqual(1)
     expect(persons[0].version).toEqual(1)
     expectedProps = {
+        $creator_event_uuid: uuid,
         $initial_browser: 'Chrome',
         $initial_browser_version: '95',
         $initial_utm_medium: 'twitter',
@@ -1029,27 +1033,118 @@ test('snapshot event stored as session_recording_event', async () => {
     expect(event.snapshot_data).toEqual({ timestamp: 123 })
 })
 
-test('$snapshot event creates new person if needed', async () => {
-    const pluginEvent: PluginEvent = {
-        distinct_id: 'some_new_id',
-        site_url: '',
-        team_id: team.id,
-        timestamp: now.toUTC().toISO(),
-        now: now.toUTC().toISO(),
-        ip: '',
-        uuid: new UUIDT().toString(),
-        event: '$snapshot',
-        properties: { $session_id: 'abcf-efg', $snapshot_data: { timestamp: 123 } },
-    } as any as PluginEvent
+test('performance event stored as performance_event', async () => {
+    await eventsProcessor.processEvent(
+        'some-id',
+        '',
+        {
+            event: '$performance_event',
+            properties: {
+                // Taken from a real event from the JS
+                '0': 'resource',
+                '1': 1671723295836,
+                '2': 'http://localhost:8000/api/projects/1/session_recordings',
+                '3': 10737.89999999106,
+                '4': 0,
+                '5': 0,
+                '6': 0,
+                '7': 10737.89999999106,
+                '8': 10737.89999999106,
+                '9': 10737.89999999106,
+                '10': 10737.89999999106,
+                '11': 0,
+                '12': 10737.89999999106,
+                '13': 10745.09999999404,
+                '14': 11121.70000000298,
+                '15': 11122.20000000298,
+                '16': 73374,
+                '17': 1767,
+                '18': 'fetch',
+                '19': 'http/1.1',
+                '20': 'non-blocking',
+                '22': 2067,
+                '39': 384.30000001192093,
+                '40': 1671723306573,
+                token: 'phc_234',
+                $session_id: '1853a793ad26c1-0eea05631cbeff-17525635-384000-1853a793ad31dd2',
+                $window_id: '1853a793ad424a5-017f7473b057f1-17525635-384000-1853a793ad524dc',
+                distinct_id: '5AzhubH8uMghFHxXq0phfs14JOjH6SA2Ftr1dzXj7U4',
+                $current_url: 'http://localhost:8000/recordings/recent',
+            },
+        } as any as PluginEvent,
+        team.id,
+        now,
+        new UUIDT().toString()
+    )
 
-    const runner = new EventPipelineRunner(hub, pluginEvent)
-    await runner.runEventPipeline(pluginEvent)
+    const fetchPerformanceEvents = async (): Promise<RawPerformanceEvent[]> => {
+        return (await hub.db.clickhouseQuery<RawPerformanceEvent>(`SELECT * FROM performance_events`)).data
+    }
 
-    await delayUntilEventIngested(() => hub.db.fetchPersons())
+    await delayUntilEventIngested(() => fetchPerformanceEvents())
 
-    const persons = await hub.db.fetchPersons()
+    const events = await hub.db.fetchEvents()
+    expect(events.length).toEqual(0)
 
-    expect(persons.length).toEqual(1)
+    const sessionRecordingEvents = await fetchPerformanceEvents()
+    expect(sessionRecordingEvents.length).toBe(1)
+
+    const [event] = sessionRecordingEvents
+
+    expect(event).toEqual({
+        _offset: expect.any(Number),
+        _partition: 0,
+        _timestamp: expect.stringMatching(/^\d{4}-\d{2}-\d{2}[\d\s:]+/),
+        connect_end: 10737.89999999106,
+        connect_start: 10737.89999999106,
+        current_url: 'http://localhost:8000/recordings/recent',
+        decoded_body_size: 73374,
+        distinct_id: 'some-id',
+        dom_complete: 0,
+        dom_content_loaded_event: 0,
+        dom_interactive: 0,
+        domain_lookup_end: 10737.89999999106,
+        domain_lookup_start: 10737.89999999106,
+        duration: 384.30000001192093,
+        encoded_body_size: 1767,
+        entry_type: 'resource',
+        fetch_start: 10737.89999999106,
+        initiator_type: 'fetch',
+        largest_contentful_paint_element: '',
+        largest_contentful_paint_id: '',
+        largest_contentful_paint_load_time: 0,
+        largest_contentful_paint_render_time: 0,
+        largest_contentful_paint_size: 0,
+        largest_contentful_paint_url: '',
+        load_event_end: 0,
+        load_event_start: 0,
+        name: 'http://localhost:8000/api/projects/1/session_recordings',
+        navigation_type: '',
+        next_hop_protocol: 'http/1.1',
+        pageview_id: '',
+        redirect_count: 0,
+        redirect_end: 0,
+        redirect_start: 0,
+        render_blocking_status: 'non-blocking',
+        request_start: 10745.09999999404,
+        response_end: 11122.20000000298,
+        response_start: 11121.70000000298,
+        response_status: 0,
+        secure_connection_start: 0,
+        session_id: '1853a793ad26c1-0eea05631cbeff-17525635-384000-1853a793ad31dd2',
+        start_time: 10737.89999999106,
+        team_id: 2,
+        time_origin: '2022-12-22 15:34:55.836',
+        timestamp: '2022-12-22 15:35:06.573',
+        transfer_size: 2067,
+        unload_event_end: 0,
+        unload_event_start: 0,
+        uuid: expect.stringMatching(
+            /^[0-9a-fA-F-]{36}$/ // a uuid
+        ),
+        window_id: '1853a793ad424a5-017f7473b057f1-17525635-384000-1853a793ad524dc',
+        worker_start: 0,
+    })
 })
 
 test('identify set', async () => {
@@ -1914,6 +2009,8 @@ test('any event can do $set on props (user exists)', async () => {
 })
 
 test('any event can do $set on props (new user)', async () => {
+    const uuid = new UUIDT().toString()
+
     await processEvent(
         'distinct_id1',
         '',
@@ -1928,7 +2025,7 @@ test('any event can do $set on props (new user)', async () => {
         } as any as PluginEvent,
         team.id,
         now,
-        new UUIDT().toString()
+        uuid
     )
 
     expect((await hub.db.fetchEvents()).length).toBe(1)
@@ -1938,7 +2035,7 @@ test('any event can do $set on props (new user)', async () => {
 
     const [person] = await hub.db.fetchPersons()
     expect(await hub.db.fetchDistinctIdValues(person)).toEqual(['distinct_id1'])
-    expect(person.properties).toEqual({ a_prop: 'test-1', c_prop: 'test-1' })
+    expect(person.properties).toEqual({ $creator_event_uuid: uuid, a_prop: 'test-1', c_prop: 'test-1' })
 })
 
 test('any event can do $set_once on props', async () => {
@@ -1992,6 +2089,7 @@ test('any event can do $set_once on props', async () => {
 })
 
 test('$set and $set_once', async () => {
+    const uuid = new UUIDT().toString()
     await processEvent(
         'distinct_id1',
         '',
@@ -2007,7 +2105,7 @@ test('$set and $set_once', async () => {
         } as any as PluginEvent,
         team.id,
         now,
-        new UUIDT().toString()
+        uuid
     )
 
     expect((await hub.db.fetchEvents()).length).toBe(1)
@@ -2015,6 +2113,7 @@ test('$set and $set_once', async () => {
     const [person] = await hub.db.fetchPersons()
     expect(await hub.db.fetchDistinctIdValues(person)).toEqual(['distinct_id1'])
     expect(person.properties).toEqual({
+        $creator_event_uuid: uuid,
         key1: 'value1',
         key2: 'value2',
         key3: 'value4',

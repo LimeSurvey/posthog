@@ -116,26 +116,33 @@ export const FEATURE_FLAGS = {
     KAFKA_INSPECTOR: 'kafka-inspector', // owner: @yakkomajuri
     INSIGHT_EDITOR_PANELS: '8929-insight-editor-panels', // owner: @mariusandra
     BILLING_LOCK_EVERYTHING: 'billing-lock-everything', // owner @timgl
-    CANCEL_RUNNING_QUERIES: 'cancel-running-queries', // owner @timgl
     HISTORICAL_EXPORTS_V2: 'historical-exports-v2', // owner @macobo
-    ACTOR_ON_EVENTS_QUERYING: 'person-on-events-enabled', //owner: @EDsCODE
+    PERSON_ON_EVENTS_ENABLED: 'person-on-events-enabled', //owner: @EDsCODE
     REGION_SELECT: 'region-select', //owner: @kappa90
     INGESTION_WARNINGS_ENABLED: 'ingestion-warnings-enabled', // owner: @tiina303
     HOG_BOOK: 'hog-book', // owner: @pauldambra
-    EVENT_COUNT_PER_ACTOR: 'event-count-per-actor', // owner: @Twixes
     SESSION_RESET_ON_LOAD: 'session-reset-on-load', // owner: @benjackwhite
     FEEDBACK_BUTTON: 'feedback-button', // owner: @luke
     RECORDINGS_ON_FEATURE_FLAGS: 'recordings-on-feature-flags', // owner: @EDsCODE
     EXPOSURES_ON_FEATURE_FLAGS: 'exposures-on-feature-flags', // owner: @EDsCODE
     AUTO_ROLLBACK_FEATURE_FLAGS: 'auto-rollback-feature-flags', // owner: @EDsCODE
     WEBSITE_ANALYTICS_TEMPLATE: 'website-analytics-template', // owner: @pauldambra
-    VARIANT_OVERRIDES: 'variant-overrides', // owner: @neilkakkar
     ONBOARDING_V2_EXPERIMENT: 'onboarding-v2-experiment', // owner: #team-growth
-    RECORDING_AUTOPLAY: 'recording-autoplay', // owner: #team-session-recordings
-    SIGNUP_PRODUCT_BENEFITS_EXPERIMENT: 'signup-product-benefits-experiment', // owner: #team-growth
+    ONBOARDING_V2_DEMO: 'onboarding-v2-demo', // owner: #team-growth
+    FEATURE_FLAG_ROLLOUT_UX: 'feature-flag-rollout-ux', // owner: @neilkakkar
     ROLE_BASED_ACCESS: 'role-based-access', // owner: #team-experiments, @liyiy
-    SECONDARY_ONBOARDING_EXPERIMENT: 'secondary-onboarding-experiment', // owner: #team-growth
     DASHBOARD_TEMPLATES: 'dashboard-templates', // owner @pauldambra
+    DATA_EXPLORATION_LIVE_EVENTS: 'data-exploration-live-events', // owner @mariusandra
+    BILLING_FEATURES_EXPERIMENT: 'billing-features-experiment', // owner: #team-growth
+    BILLING_PLAN_MOST_POPULAR_EXPERIMENT: 'billing-plan-most-popular-experiment', // owner: #team-growth, @raquelmsmith
+    YEAR_IN_HOG: 'year-in-hog', // owner: @pauldambra
+    YULE_HOG: 'yule-hog', // owner: @benjackwhite
+    HOGQL_EXPRESSIONS: 'hogql_expressions', // owner @mariusandra
+    QUERY_RUNNING_TIME: 'query_running_time', // owner: @mariusandra
+    RECORDINGS_INSPECTOR_V2: 'recordings-inspector-v2', // owner: #team-session-recordings
+    RECORDINGS_INSPECTOR_PERFORMANCE: 'recordings-inspector-performance', // owner: #team-session-recordings
+    DATA_EXPLORATION_INSIGHTS: 'data-exploration-insights', // owner @thmsobrmlr
+    RECORDING_DEBUGGING: 'recording-debugging', // owner #team-session-recordings
 }
 
 /** Which self-hosted plan's features are available with Cloud's "Standard" plan (aka card attached). */
@@ -162,6 +169,8 @@ export const FEATURE_MINIMUM_PLAN: Record<AvailableFeature, LicensePlan> = {
     [AvailableFeature.APP_METRICS]: LicensePlan.Scale,
     [AvailableFeature.RECORDINGS_PLAYLISTS]: LicensePlan.Scale,
     [AvailableFeature.ROLE_BASED_ACCESS]: LicensePlan.Enterprise,
+    [AvailableFeature.RECORDINGS_FILE_EXPORT]: LicensePlan.Scale,
+    [AvailableFeature.RECORDINGS_PERFORMANCE]: LicensePlan.Scale,
 }
 
 export const ENTITY_MATCH_TYPE = 'entities'

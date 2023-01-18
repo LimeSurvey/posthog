@@ -1,17 +1,19 @@
 import {
-    OrganizationMembershipLevel,
-    PluginsAccessLevel,
-    ShownAsValue,
-    RETENTION_RECURRING,
-    RETENTION_FIRST_TIME,
+    BIN_COUNT_AUTO,
+    DashboardPrivilegeLevel,
+    DashboardRestrictionLevel,
     ENTITY_MATCH_TYPE,
     FunnelLayout,
-    BIN_COUNT_AUTO,
+    OrganizationMembershipLevel,
+    PluginsAccessLevel,
+    PROPERTY_MATCH_TYPE,
+    RETENTION_FIRST_TIME,
+    RETENTION_RECURRING,
+    ShownAsValue,
     TeamMembershipLevel,
 } from 'lib/constants'
 import { PluginConfigSchema } from '@posthog/plugin-scaffold'
 import { PluginInstallationType } from 'scenes/plugins/types'
-import { PROPERTY_MATCH_TYPE, DashboardRestrictionLevel, DashboardPrivilegeLevel } from 'lib/constants'
 import { UploadFile } from 'antd/lib/upload/interface'
 import { eventWithTime } from 'rrweb/typings/types'
 import { PostHog } from 'posthog-js'
@@ -23,8 +25,9 @@ import { TaxonomicFilterGroupType } from 'lib/components/TaxonomicFilter/types'
 import { BehavioralFilterKey, BehavioralFilterType } from 'scenes/cohorts/CohortFilters/types'
 import { LogicWrapper } from 'kea'
 import { AggregationAxisFormat } from 'scenes/insights/aggregationAxisFormat'
-import { RowStatus } from 'scenes/session-recordings/player/list/listLogic'
+import { RowStatus } from 'scenes/session-recordings/player/inspector/v1/listLogic'
 import { Layout } from 'react-grid-layout'
+import { InsightQueryNode } from './queries/schema'
 
 export type Optional<T, K extends string | number | symbol> = Omit<T, K> & { [K in keyof T]?: T[K] }
 
@@ -51,6 +54,8 @@ export enum AvailableFeature {
     APP_METRICS = 'app_metrics',
     RECORDINGS_PLAYLISTS = 'recordings_playlists',
     ROLE_BASED_ACCESS = 'role_based_access',
+    RECORDINGS_FILE_EXPORT = 'recordings_file_export',
+    RECORDINGS_PERFORMANCE = 'recordings_performance',
 }
 
 export enum LicensePlan {
@@ -144,6 +149,7 @@ export interface OrganizationBasicType {
 interface OrganizationMetadata {
     taxonomy_set_events_count: number
     taxonomy_set_properties_count: number
+    instance_tag?: string
 }
 
 export interface OrganizationType extends OrganizationBasicType {
@@ -260,6 +266,8 @@ export interface TeamType extends TeamBasicType {
     slack_incoming_webhook: string
     session_recording_opt_in: boolean
     capture_console_log_opt_in: boolean
+
+    capture_performance_opt_in: boolean
     test_account_filters: AnyPropertyFilter[]
     test_account_filters_default_checked: boolean
     path_cleaning_filters: Record<string, any>[]
@@ -274,6 +282,8 @@ export interface TeamType extends TeamBasicType {
      * This field should have a default value of `{}`, but it IS nullable and can be `null` in some cases.
      */
     correlation_config: CorrelationConfigType | null
+    person_on_events_querying_enabled: boolean
+    groups_on_events_querying_enabled: boolean
 }
 
 export interface ActionType {
@@ -321,10 +331,10 @@ export interface ElementType {
     attr_class?: string[]
     attr_id?: string
     attributes: Record<string, string>
-    href: string
-    nth_child: number
-    nth_of_type: number
-    order: number
+    href?: string
+    nth_child?: number
+    nth_of_type?: number
+    order?: number
     tag_name: string
     text?: string
 }
@@ -390,6 +400,7 @@ export enum SavedInsightsTabs {
 export enum SessionRecordingsTabs {
     Recent = 'recent',
     Playlists = 'playlists',
+    FilePlayback = 'file-playback',
 }
 
 export enum ExperimentsTabs {
@@ -506,7 +517,7 @@ export interface RRWebRecordingConsoleLogPayload {
     trace: string[]
 }
 
-export interface RecordingConsoleLog extends RecordingTimeMixinType {
+export interface RecordingConsoleLogBase {
     parsedPayload: string
     hash?: string // md5() on parsedPayload. Used for deduping console logs.
     count?: number // Number of duplicate console logs
@@ -515,6 +526,18 @@ export interface RecordingConsoleLog extends RecordingTimeMixinType {
     traceContent?: React.ReactNode // Url content to show on right side
     rawString: string // Raw text used for fuzzy search
     level: LogLevel
+}
+
+export type RecordingConsoleLog = RecordingConsoleLogBase & RecordingTimeMixinType
+
+export type RecordingConsoleLogV2 = {
+    timestamp: number
+    windowId: string | undefined
+    level: LogLevel
+    content: string
+    lines: string[]
+    trace: string[]
+    count: number
 }
 
 export interface RecordingSegment {
@@ -533,10 +556,10 @@ export interface RecordingStartAndEndTime {
 }
 
 export interface SessionRecordingMeta {
+    pinnedCount: number
     segments: RecordingSegment[]
     startAndEndTimesByWindowId: Record<string, RecordingStartAndEndTime>
     recordingDurationMs: number
-    playlists?: SessionRecordingPlaylistType['id'][]
 }
 
 export interface SessionPlayerSnapshotData {
@@ -560,8 +583,10 @@ export enum SessionRecordingUsageType {
 }
 
 export enum SessionRecordingPlayerTab {
+    ALL = 'all',
     EVENTS = 'events',
     CONSOLE = 'console',
+    PERFORMANCE = 'performance',
 }
 
 export enum SessionPlayerState {
@@ -595,7 +620,6 @@ export interface RecordingFilters {
     properties?: AnyPropertyFilter[]
     offset?: number
     session_recording_duration?: RecordingDurationFilter
-    static_recordings?: SessionRecordingPlaylistType['playlist_items']
 }
 
 export interface LocalRecordingFilters extends RecordingFilters {
@@ -626,7 +650,7 @@ export enum EntityTypes {
 export type EntityFilter = {
     type?: EntityType
     id: Entity['id'] | null
-    name: string | null
+    name?: string | null
     custom_name?: string
     index?: number
     order?: number
@@ -640,7 +664,7 @@ export interface FunnelStepRangeEntityFilter {
 export type EntityFilterTypes = EntityFilter | ActionFilter | null
 
 export interface PersonType {
-    id?: number
+    id?: string
     uuid?: string
     name?: string
     distinct_ids: string[]
@@ -656,7 +680,7 @@ export interface PersonListParams {
     distinct_id?: string
 }
 
-export interface MatchedRecordingEvents {
+export interface MatchedRecordingEvent {
     uuid: string
     session_id: string
     window_id: string
@@ -665,7 +689,7 @@ export interface MatchedRecordingEvents {
 
 export interface MatchedRecording {
     session_id?: string
-    events: MatchedRecordingEvents[]
+    events: MatchedRecordingEvent[]
 }
 
 interface CommonActorType {
@@ -677,17 +701,19 @@ interface CommonActorType {
 }
 
 export interface PersonActorType extends CommonActorType {
-    id: number // person serial ID
     type: 'person'
-    uuid?: string
+    /** Serial ID (NOT UUID). */
+    id: number
+    uuid: string
     name?: string
     distinct_ids: string[]
     is_identified: boolean
 }
 
 export interface GroupActorType extends CommonActorType {
-    id: string // group key
     type: 'group'
+    /** Group key. */
+    id: string
     group_key: string
     group_type_index: number
 }
@@ -818,7 +844,7 @@ export interface RecordingTimeMixinType {
     playerTime: number | null
     playerPosition: PlayerPosition | null
     colonTimestamp?: string
-    isOutOfBand?: boolean // Did the event or console log not originate from the same client library as the recording
+    capturedInWindow?: boolean // Did the event or console log not originate from the same client library as the recording
 }
 
 export interface RecordingEventType extends EventType, RecordingTimeMixinType {
@@ -846,8 +872,13 @@ export interface SessionRecordingPlaylistType {
     last_modified_at: string
     last_modified_by: UserBasicType | null
     filters?: RecordingFilters
-    playlist_items?: Pick<SessionRecordingType, 'id'>[] // only id is exposed by api to minimize data passed through components
-    is_static?: boolean
+}
+
+export interface SessionRecordingSegmentType {
+    start_time: string
+    end_time: string
+    window_id: string
+    is_active: boolean
 }
 
 export interface SessionRecordingType {
@@ -865,11 +896,18 @@ export interface SessionRecordingType {
     distinct_id?: string
     email?: string
     person?: PersonType
-    /** List of static playlists that this recording is referenced on */
-    playlists?: SessionRecordingPlaylistType['id'][]
     click_count?: number
     keypress_count?: number
-    urls?: string[]
+    start_url?: string
+    /** Count of number of playlists this recording is pinned to. **/
+    pinned_count?: number
+    /** Where this recording information was loaded from (S3 or Clickhouse) */
+    storage?: string
+
+    // These values are only present when loaded as a full recording
+    segments?: SessionRecordingSegmentType[]
+    start_and_end_times_by_window_id?: Record<string, Record<string, string>>
+    snapshot_data_by_window_id?: Record<string, eventWithTime[]>
 }
 
 export interface SessionRecordingPropertiesType {
@@ -880,6 +918,79 @@ export interface SessionRecordingPropertiesType {
 export interface SessionRecordingEvents {
     next?: string
     events: RecordingEventType[]
+}
+
+export interface PerformancePageView {
+    session_id: string
+    pageview_id: string
+    timestamp: string
+}
+export interface RecentPerformancePageView extends PerformancePageView {
+    page_url: string
+    duration: number
+}
+
+export interface PerformanceEvent {
+    uuid: string
+    timestamp: string
+    distinct_id: string
+    session_id: string
+    window_id: string
+    pageview_id: string
+    current_url: string
+
+    // BASE_EVENT_COLUMNS
+    time_origin?: string
+    entry_type?: string
+    name?: string
+
+    // RESOURCE_EVENT_COLUMNS
+    start_time?: number
+    duration?: number
+    redirect_start?: number
+    redirect_end?: number
+    worker_start?: number
+    fetch_start?: number
+    domain_lookup_start?: number
+    domain_lookup_end?: number
+    connect_start?: number
+    secure_connection_start?: number
+    connect_end?: number
+    request_start?: number
+    response_start?: number
+    response_end?: number
+    decoded_body_size?: number
+    encoded_body_size?: number
+
+    initiator_type?: string
+    next_hop_protocol?: string
+    render_blocking_status?: string
+    response_status?: number
+    transfer_size?: number
+
+    // LARGEST_CONTENTFUL_PAINT_EVENT_COLUMNS
+    largest_contentful_paint_element?: string
+    largest_contentful_paint_render_time?: number
+    largest_contentful_paint_load_time?: number
+    largest_contentful_paint_size?: number
+    largest_contentful_paint_id?: string
+    largest_contentful_paint_url?: string
+
+    // NAVIGATION_EVENT_COLUMNS
+    dom_complete?: number
+    dom_content_loaded_event?: number
+    dom_interactive?: number
+    load_event_end?: number
+    load_event_start?: number
+    redirect_count?: number
+    navigation_type?: string
+    unload_event_end?: number
+    unload_event_start?: number
+
+    // Performance summary fields calculated on frontend
+    first_contentful_paint?: number // https://web.dev/fcp/
+    time_to_interactive?: number // https://web.dev/tti/
+    total_blocking_time?: number // https://web.dev/tbt/
 }
 
 export interface CurrentBillCycleType {
@@ -981,8 +1092,6 @@ export enum InsightColor {
 
 export interface Cacheable {
     last_refresh: string | null
-    filters_hash: string
-    refreshing: boolean
 }
 
 export interface TileLayout extends Omit<Layout, 'i'> {
@@ -1272,6 +1381,7 @@ export interface FilterType {
     properties?: AnyPropertyFilter[] | PropertyGroupFilter
     events?: Record<string, any>[]
     actions?: Record<string, any>[]
+    new_entity?: Record<string, any>[]
 
     filter_test_accounts?: boolean
     from_dashboard?: boolean | number
@@ -1290,7 +1400,20 @@ export interface FilterType {
     breakdowns?: Breakdown[]
     breakdown_value?: string | number
     breakdown_group_type_index?: number | null
-    aggregation_group_type_index?: number | undefined // Groups aggregation
+    aggregation_group_type_index?: number // Groups aggregation
+}
+
+export interface PropertiesTimelineFilterType {
+    date_from?: string | null // DateMixin
+    date_to?: string | null // DateMixin
+    interval?: IntervalType // IntervalMixin
+    properties?: AnyPropertyFilter[] | PropertyGroupFilter // PropertyMixin
+    events?: Record<string, any>[] // EntitiesMixin
+    actions?: Record<string, any>[] // EntitiesMixin
+    aggregation_group_type_index?: number // GroupsAggregationMixin
+    display?: ChartDisplayType // DisplayDerivedMixin
+    breakdown_type?: BreakdownType | null
+    breakdown?: BreakdownKeyType
 }
 
 export interface TrendsFilterType extends FilterType {
@@ -1338,7 +1461,6 @@ export interface FunnelsFilterType extends FilterType {
     funnel_step?: number
     entrance_period_start?: string // this and drop_off is used for funnels time conversion date for the persons modal
     drop_off?: boolean
-    new_entity?: Record<string, any>[]
     hidden_legend_keys?: Record<string, boolean | undefined> // used to toggle visibilities in table and legend
 }
 export interface PathsFilterType extends FilterType {
@@ -1371,6 +1493,7 @@ export interface RetentionFilterType extends FilterType {
 export interface LifecycleFilterType extends FilterType {
     shown_as?: ShownAsValue
 }
+export type LifecycleToggle = 'new' | 'resurrecting' | 'returning' | 'dormant'
 export type AnyFilterType =
     | TrendsFilterType
     | StickinessFilterType
@@ -1378,6 +1501,7 @@ export type AnyFilterType =
     | PathsFilterType
     | RetentionFilterType
     | LifecycleFilterType
+    | PropertiesTimelineFilterType
     | FilterType
 
 export type AnyPartialFilterType =
@@ -1395,7 +1519,9 @@ export interface EventsListQueryParams {
     orderBy?: string[]
     action_id?: number
     after?: string
+    before?: string
     limit?: number
+    offset?: number
 }
 
 export interface RecordingEventsFilters {
@@ -1410,11 +1536,11 @@ export enum RecordingWindowFilter {
     All = 'all',
 }
 
-export type InsightEditorFilterGroup = {
+export type InsightEditorFilterGroup<T = InsightEditorFilter> = {
     title?: string
-    editorFilters: InsightEditorFilter[]
-    defaultExpanded?: boolean
     count?: number
+    editorFilters: T[]
+    defaultExpanded?: boolean
 }
 
 export interface EditorFilterProps {
@@ -1424,15 +1550,25 @@ export interface EditorFilterProps {
     value: any
 }
 
-export interface InsightEditorFilter {
+export interface QueryEditorFilterProps {
+    query: InsightQueryNode
+    setQuery: (node: InsightQueryNode) => void
+    insightProps: InsightLogicProps
+}
+
+export interface InsightEditorFilter<T = EditorFilterProps> {
     key: string
-    label?: string | ((props: EditorFilterProps) => JSX.Element | null)
+    label?: string | ((props: T) => JSX.Element | null)
     tooltip?: JSX.Element
     showOptional?: boolean
     position?: 'left' | 'right'
     valueSelector?: (insight: Partial<InsightModel>) => any
-    component?: (props: EditorFilterProps) => JSX.Element | null
+    component?: (props: T) => JSX.Element | null
 }
+
+export type QueryInsightEditorFilter = InsightEditorFilter<QueryEditorFilterProps>
+
+export type QueryInsightEditorFilterGroup = InsightEditorFilterGroup<QueryInsightEditorFilter>
 
 export interface SystemStatusSubrows {
     columns: string[]
@@ -1665,7 +1801,8 @@ export interface SetInsightOptions {
 export interface FeatureFlagGroupType {
     properties: AnyPropertyFilter[]
     rollout_percentage: number | null
-    variant?: string
+    variant: string | null
+    users_affected?: number
 }
 
 export interface MultivariateFlagVariant {
@@ -1700,6 +1837,7 @@ export interface FeatureFlagType {
     rollback_conditions: FeatureFlagRollbackConditions[]
     performed_rollback: boolean
     can_edit: boolean
+    tags: string[]
 }
 
 export interface FeatureFlagRollbackConditions {
@@ -1712,6 +1850,11 @@ export interface FeatureFlagRollbackConditions {
 export interface CombinedFeatureFlagAndValueType {
     feature_flag: FeatureFlagType
     value: boolean | string
+}
+
+export interface UserBlastRadiusType {
+    users_affected: number
+    total_users: number
 }
 
 export interface PrevalidatedInvite {
@@ -1911,16 +2054,16 @@ export interface Experiment {
     description?: string
     feature_flag_key: string
     // ID of feature flag
-    feature_flag: number
+    feature_flag?: number
     filters: FilterType
     parameters: {
         minimum_detectable_effect?: number
         recommended_running_time?: number
         recommended_sample_size?: number
-        feature_flag_variants?: MultivariateFlagVariant[]
+        feature_flag_variants: MultivariateFlagVariant[]
     }
-    start_date?: string
-    end_date?: string
+    start_date?: string | null
+    end_date?: string | null
     archived?: boolean
     secondary_metrics: SecondaryExperimentMetric[]
     created_at: string
@@ -1937,10 +2080,10 @@ export interface ExperimentResults {
     significance_code: SignificanceCode
     expected_loss?: number
     p_value?: number
-    secondary_metric_results?: SecondaryMetricResult[]
+    secondary_metric_results?: SecondaryMetricAPIResult[]
 }
 
-export interface SecondaryMetricResult {
+export interface SecondaryMetricAPIResult {
     name: string
     result: Record<string, number>
 }
@@ -2019,6 +2162,8 @@ export interface AppContext {
     switched_team: TeamType['id'] | null
     /** First day of the week (0 = Sun, 1 = Mon, ...) */
     week_start: number
+
+    year_in_hog_url?: string
 }
 
 export type StoredMetricMathOperations = 'max' | 'min' | 'sum'
@@ -2380,6 +2525,8 @@ export interface RoleType {
     id: string
     name: string
     feature_flags_access_level: AccessLevel
+    members: RoleMemberType[]
+    associated_flags: { id: number; key: string }[]
     created_at: string
     created_by: UserBasicType | null
 }
@@ -2390,7 +2537,7 @@ export interface RolesListParams {
 
 export interface FeatureFlagAssociatedRoleType {
     id: string
-    feature_flag: FeatureFlagType
+    feature_flag: FeatureFlagType | null
     role: RoleType
     updated_at: string
     added_at: string
@@ -2412,4 +2559,17 @@ export interface OrganizationResourcePermissionType {
     created_at: string
     updated_at: string
     created_by: UserBaseType | null
+}
+
+export interface RecordingReportLoadTimeRow {
+    size?: number
+    duration: number
+}
+
+export interface RecordingReportLoadTimes {
+    metadata: RecordingReportLoadTimeRow
+    snapshots: RecordingReportLoadTimeRow
+    events: RecordingReportLoadTimeRow
+    performanceEvents: RecordingReportLoadTimeRow
+    firstPaint: RecordingReportLoadTimeRow
 }

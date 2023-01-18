@@ -14,12 +14,14 @@ export interface LemonButtonPropsBase
     // NOTE: We explicitly pick rather than omit to ensure these components aren't used incorrectly
     extends Pick<
         React.ButtonHTMLAttributes<HTMLElement>,
-        'title' | 'onClick' | 'id' | 'tabIndex' | 'form' | 'onMouseDown'
+        'title' | 'onClick' | 'id' | 'tabIndex' | 'form' | 'onMouseDown' | 'onMouseEnter' | 'onMouseLeave' | 'onKeyDown'
     > {
     children?: React.ReactNode
     type?: 'primary' | 'secondary' | 'tertiary'
-    /** What color scheme the button should follow */
-    status?: 'primary' | 'danger' | 'primary-alt' | 'muted' | 'muted-alt' | 'stealth'
+    /** What color scheme the button should follow
+     * orange is a temporary variable only for year in posthog
+     * */
+    status?: 'primary' | 'danger' | 'primary-alt' | 'muted' | 'muted-alt' | 'stealth' | 'orange'
     /** Whether hover style should be applied, signaling that the button is held active in some way. */
     active?: boolean
     /** URL to link to. */
@@ -41,8 +43,10 @@ export interface LemonButtonPropsBase
     /** Whether the row should take up the parent's full width. */
     fullWidth?: boolean
     center?: boolean
-    /** @deprecated Buttons should never be disabled. Work with Design to find an alternative approach. */
+    /** @deprecated Buttons should never be quietly disabled. Use `disabledReason` to provide an explanation instead. */
     disabled?: boolean
+    /** Like plain `disabled`, except we enforce a reason to be shown in the tooltip. */
+    disabledReason?: string | null | false
     noPadding?: boolean
     size?: 'small' | 'medium' | 'large'
     'data-attr'?: string
@@ -60,6 +64,7 @@ function LemonButtonInternal(
         active = false,
         className,
         disabled,
+        disabledReason,
         loading,
         type = 'tertiary',
         status = 'primary',
@@ -81,6 +86,22 @@ function LemonButtonInternal(
 ): JSX.Element {
     if (loading) {
         icon = <Spinner monocolor />
+    }
+    let tooltipContent: TooltipProps['title']
+    if (disabledReason) {
+        disabled = true // Support `disabledReason` while maintaining compatibility with `disabled`
+        if (tooltipContent) {
+            tooltipContent = (
+                <>
+                    {tooltip}
+                    <div className="mt-1 italic">{disabledReason}</div>
+                </>
+            )
+        } else {
+            tooltipContent = <span className="italic">{disabledReason}</span>
+        }
+    } else {
+        tooltipContent = tooltip
     }
 
     const ButtonComponent = to ? Link : 'button'
@@ -111,7 +132,7 @@ function LemonButtonInternal(
                 className
             )}
             disabled={disabled || loading}
-            to={to}
+            to={disabled ? undefined : to}
             target={targetBlank ? '_blank' : undefined}
             {...linkOnlyProps}
             {...buttonProps}
@@ -122,11 +143,11 @@ function LemonButtonInternal(
         </ButtonComponent>
     )
 
-    if (tooltip) {
+    if (tooltipContent) {
         workingButton = (
-            <Tooltip title={tooltip} placement={tooltipPlacement}>
-                {/* If the button is disabled, wrap it in a div so that the tooltip can still work */}
-                {disabled ? <div>{workingButton}</div> : workingButton}
+            <Tooltip title={tooltipContent} placement={tooltipPlacement}>
+                {/* If the button is a `button` element and disabled, wrap it in a div so that the tooltip works */}
+                {disabled && ButtonComponent === 'button' ? <div>{workingButton}</div> : workingButton}
             </Tooltip>
         )
     }

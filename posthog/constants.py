@@ -28,13 +28,15 @@ class AvailableFeature(str, Enum):
     APP_METRICS = "app_metrics"
     RECORDINGS_PLAYLISTS = "recordings_playlists"
     ROLE_BASED_ACCESS = "role_based_access"
+    RECORDINGS_FILE_EXPORT = "recordings_file_export"
+    RECORDINGS_PERFORMANCE = "recordings_performance"
 
 
 TREND_FILTER_TYPE_ACTIONS = "actions"
 TREND_FILTER_TYPE_EVENTS = "events"
 
 SESSION_RECORDINGS_FILTER_TYPE_DURATION = "session_recording_duration"
-SESSION_RECORDINGS_FILTER_STATIC_RECORDINGS = "static_recordings"
+SESSION_RECORDINGS_FILTER_IDS = "session_ids"
 SESSION_RECORDINGS_PLAYLIST_FREE_COUNT = 5
 
 TRENDS_CUMULATIVE = "ActionsLineGraphCumulative"
@@ -50,7 +52,7 @@ TRENDS_BOLD_NUMBER = "BoldNumber"
 
 # Sync with frontend NON_TIME_SERIES_DISPLAY_TYPES
 NON_TIME_SERIES_DISPLAY_TYPES = [TRENDS_TABLE, TRENDS_PIE, TRENDS_BAR_VALUE, TRENDS_WORLD_MAP, TRENDS_BOLD_NUMBER]
-# Sync with frontend NON_TIME_SERIES_DISPLAY_TYPES
+# Sync with frontend NON_BREAKDOWN_DISPLAY_TYPES
 NON_BREAKDOWN_DISPLAY_TYPES = [TRENDS_BOLD_NUMBER]
 
 # CONSTANTS
@@ -225,6 +227,7 @@ class AnalyticsDBMS(str, Enum):
 
 
 UNIQUE_USERS = "dau"
+UNIQUE_GROUPS = "unique_group"
 WEEKLY_ACTIVE = "weekly_active"
 MONTHLY_ACTIVE = "monthly_active"
 

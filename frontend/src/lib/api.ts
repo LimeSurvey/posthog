@@ -35,6 +35,8 @@ import {
     RolesListParams,
     FeatureFlagAssociatedRoleType,
     SessionRecordingType,
+    PerformanceEvent,
+    RecentPerformancePageView,
 } from '~/types'
 import { getCurrentOrganizationId, getCurrentTeamId } from './utils/logics'
 import { CheckboxValueType } from 'antd/lib/checkbox/Group'
@@ -46,7 +48,7 @@ import { EVENT_PROPERTY_DEFINITIONS_PER_PAGE } from 'scenes/data-management/even
 import { ActivityLogItem, ActivityScope } from 'lib/components/ActivityLog/humanizeActivity'
 import { ActivityLogProps } from 'lib/components/ActivityLog/ActivityLog'
 import { SavedSessionRecordingPlaylistsResult } from 'scenes/session-recordings/saved-playlists/savedSessionRecordingPlaylistsLogic'
-import { UpdatedRecordingResponse } from 'scenes/session-recordings/saved-playlists/savedSessionRecordingPlaylistModelLogic'
+import { dayjs } from 'lib/dayjs'
 
 export const ACTIVITY_PAGE_SIZE = 20
 
@@ -410,6 +412,18 @@ class ApiRequest {
         return this.featureFlagAccessPermissions(flagId).addPathComponent(id)
     }
 
+    // Performance events
+    public performanceEvents(teamId?: TeamType['id']): ApiRequest {
+        return this.projectsDetail(teamId).addPathComponent('performance_events')
+    }
+
+    public recentPageViewPerformanceEvents(dateFrom: string, dateTo: string, teamId?: TeamType['id']): ApiRequest {
+        return this.projectsDetail(teamId)
+            .addPathComponent('performance_events')
+            .addPathComponent('recent_pageviews')
+            .withQueryString(toParams({ date_from: dateFrom, date_to: dateTo }))
+    }
+
     // Request finalization
 
     public async get(options?: ApiMethodOptions): Promise<any> {
@@ -555,18 +569,18 @@ const api = {
         },
         async list(
             filters: EventsListQueryParams,
-            limit: number = 10,
+            limit: number = 100,
             teamId: TeamType['id'] = getCurrentTeamId()
         ): Promise<PaginatedResponse<EventType[]>> {
-            const params: EventsListQueryParams = { ...filters, limit, orderBy: ['-timestamp'] }
+            const params: EventsListQueryParams = { ...filters, limit, orderBy: filters.orderBy ?? ['-timestamp'] }
             return new ApiRequest().events(teamId).withQueryString(toParams(params)).get()
         },
         determineListEndpoint(
             filters: EventsListQueryParams,
-            limit: number = 10,
+            limit: number = 100,
             teamId: TeamType['id'] = getCurrentTeamId()
         ): string {
-            const params: EventsListQueryParams = { ...filters, limit, orderBy: ['-timestamp'] }
+            const params: EventsListQueryParams = { ...filters, limit }
             return new ApiRequest().events(teamId).withQueryString(toParams(params)).assembleFullUrl()
         },
     },
@@ -774,18 +788,14 @@ const api = {
         async delete(roleId: RoleType['id']): Promise<void> {
             return await new ApiRequest().rolesDetail(roleId).delete()
         },
-        async create(
-            roleName: RoleType['name'],
-            featureFlagAccessLevel: RoleType['feature_flags_access_level']
-        ): Promise<RoleType> {
+        async create(roleName: RoleType['name']): Promise<RoleType> {
             return await new ApiRequest().roles().create({
                 data: {
                     name: roleName,
-                    feature_flags_access_level: featureFlagAccessLevel,
                 },
             })
         },
-        async update(roleId: RoleType['id'], roleData: Partial<RoleType>): Promise<ActionType> {
+        async update(roleId: RoleType['id'], roleData: Partial<RoleType>): Promise<RoleType> {
             return await new ApiRequest().rolesDetail(roleId).update({ data: roleData })
         },
         members: {
@@ -816,7 +826,7 @@ const api = {
         async update(id: number, person: Partial<PersonType>): Promise<PersonType> {
             return new ApiRequest().person(id).update({ data: person })
         },
-        async updateProperty(id: number, property: string, value: any): Promise<void> {
+        async updateProperty(id: string, property: string, value: any): Promise<void> {
             return new ApiRequest()
                 .person(id)
                 .withAction('update_property')
@@ -827,7 +837,7 @@ const api = {
                     },
                 })
         },
-        async deleteProperty(id: number, property: string): Promise<void> {
+        async deleteProperty(id: string, property: string): Promise<void> {
             return new ApiRequest()
                 .person(id)
                 .withAction('delete_property')
@@ -953,11 +963,20 @@ const api = {
         async listProperties(params: string): Promise<PaginatedResponse<SessionRecordingPropertiesType>> {
             return await new ApiRequest().recordings().withAction('properties').withQueryString(params).get()
         },
+
+        async get(recordingId: SessionRecordingType['id'], params: string): Promise<SessionRecordingType> {
+            return await new ApiRequest().recording(recordingId).withQueryString(params).get()
+        },
+
+        async listSnapshots(recordingId: SessionRecordingType['id'], params: string): Promise<SessionRecordingType> {
+            return await new ApiRequest().recording(recordingId).withAction('snapshots').withQueryString(params).get()
+        },
+
         async updateRecording(
             recordingId: SessionRecordingType['id'],
             recording: Partial<SessionRecordingType>,
             params?: string
-        ): Promise<UpdatedRecordingResponse> {
+        ): Promise<SessionRecordingType> {
             return await new ApiRequest().recording(recordingId).withQueryString(params).update({ data: recording })
         },
         async listPlaylists(params: string): Promise<SavedSessionRecordingPlaylistsResult> {
@@ -974,6 +993,39 @@ const api = {
             playlist: Partial<SessionRecordingPlaylistType>
         ): Promise<SessionRecordingPlaylistType> {
             return await new ApiRequest().recordingPlaylist(playlistId).update({ data: playlist })
+        },
+
+        async listPlaylistRecordings(
+            playlistId: SessionRecordingPlaylistType['short_id'],
+            params: string
+        ): Promise<SessionRecordingsResponse> {
+            return await new ApiRequest()
+                .recordingPlaylist(playlistId)
+                .withAction('recordings')
+                .withQueryString(params)
+                .get()
+        },
+
+        async addRecordingToPlaylist(
+            playlistId: SessionRecordingPlaylistType['short_id'],
+            session_recording_id: SessionRecordingType['id']
+        ): Promise<SessionRecordingPlaylistType> {
+            return await new ApiRequest()
+                .recordingPlaylist(playlistId)
+                .withAction('recordings')
+                .withAction(session_recording_id)
+                .create()
+        },
+
+        async removeRecordingFromPlaylist(
+            playlistId: SessionRecordingPlaylistType['short_id'],
+            session_recording_id: SessionRecordingType['id']
+        ): Promise<SessionRecordingPlaylistType> {
+            return await new ApiRequest()
+                .recordingPlaylist(playlistId)
+                .withAction('recordings')
+                .withAction(session_recording_id)
+                .delete()
         },
     },
 
@@ -1048,6 +1100,29 @@ const api = {
         },
     },
 
+    performanceEvents: {
+        async list(
+            params: any,
+            teamId: TeamType['id'] = getCurrentTeamId()
+        ): Promise<PaginatedResponse<PerformanceEvent>> {
+            return new ApiRequest().performanceEvents(teamId).withQueryString(toParams(params)).get()
+        },
+        async recentPageViews(
+            teamId: TeamType['id'] = getCurrentTeamId(),
+            dateFrom?: string,
+            dateTo?: string
+        ): Promise<PaginatedResponse<RecentPerformancePageView>> {
+            return new ApiRequest()
+                .recentPageViewPerformanceEvents(
+                    dateFrom || dayjs().subtract(1, 'hour').toISOString(),
+                    dateTo || dayjs().toISOString(),
+                    teamId
+                )
+                .get()
+        },
+    },
+
+    /** Fetch data from specified URL. The result already is JSON-parsed. */
     async get(url: string, options?: ApiMethodOptions): Promise<any> {
         const res = await api.getResponse(url, options)
         return await getJSONOrThrow(res)

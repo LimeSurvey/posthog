@@ -16,7 +16,7 @@ import { getBreakpoint } from 'lib/utils/responsiveUtils'
 import { urlToAction } from 'kea-router'
 import { urls } from 'scenes/urls'
 import { eventUsageLogic } from 'lib/utils/eventUsageLogic'
-import { billingLogic as billingLogicV2 } from './v2/billingLogic'
+import { billingLogic as billingLogicV2 } from './v2/control/billingLogic'
 
 export const UTM_TAGS = 'utm_medium=in-product&utm_campaign=billing-management'
 export const ALLOCATION_THRESHOLD_ALERT = 0.85 // Threshold to show warning of event usage near limit
@@ -25,7 +25,6 @@ export enum BillingAlertType {
     SetupBilling = 'setup_billing',
     UsageNearLimit = 'usage_near_limit',
     UsageLimitExceeded = 'usage_limit_exceeded',
-    FreeUsageNearLimit = 'free_usage_near_limit',
 }
 
 export const billingLogic = kea<billingLogicType>([
@@ -188,11 +187,6 @@ export const billingLogic = kea<billingLogicType>([
                     percentage >= ALLOCATION_THRESHOLD_ALERT
                 ) {
                     return BillingAlertType.UsageNearLimit
-                }
-
-                // Priority 4: Users on free account that are almost reaching free events threshold
-                if (!billing?.is_billing_active && billing?.current_usage && percentage > ALLOCATION_THRESHOLD_ALERT) {
-                    return BillingAlertType.FreeUsageNearLimit
                 }
             },
         ],

@@ -1,10 +1,9 @@
 import { useState } from 'react'
 import { useActions, useValues } from 'kea'
-import { ActorType, ExporterFormat, SessionRecordingType } from '~/types'
+import { ActorType, ExporterFormat, PropertiesTimelineFilterType, SessionRecordingType } from '~/types'
 import { personsModalLogic } from './personsModalLogic'
 import { CopyToClipboardInline } from 'lib/components/CopyToClipboard'
 import { capitalizeFirstLetter, isGroupType, midEllipsis, pluralize } from 'lib/utils'
-import { PropertiesTable } from 'lib/components/PropertiesTable'
 import { GroupActorHeader, groupDisplayId } from 'scenes/persons/GroupActorHeader'
 import { IconPlayCircle, IconUnfoldLess, IconUnfoldMore } from 'lib/components/icons'
 import { triggerExport } from 'lib/components/ExportButton/exporter'
@@ -20,8 +19,12 @@ import { sessionPlayerModalLogic } from 'scenes/session-recordings/player/modal/
 import { AlertMessage } from 'lib/components/AlertMessage'
 import { Tooltip } from 'lib/components/Tooltip'
 import { Noun } from '~/models/groupsModel'
+import { LemonModalProps } from '@posthog/lemon-ui'
+import { PropertiesTimeline } from 'lib/components/PropertiesTimeline'
+import { PropertiesTable } from 'lib/components/PropertiesTable'
+import { teamLogic } from 'scenes/teamLogic'
 
-export interface PersonsModalProps {
+export interface PersonsModalProps extends Pick<LemonModalProps, 'inline'> {
     onAfterClose?: () => void
     url?: string
     urlsIndex?: number
@@ -32,7 +35,14 @@ export interface PersonsModalProps {
     title: React.ReactNode | ((actorLabel: string) => React.ReactNode)
 }
 
-function PersonsModal({ url: _url, urlsIndex, urls, title, onAfterClose }: PersonsModalProps): JSX.Element {
+export function PersonsModal({
+    url: _url,
+    urlsIndex,
+    urls,
+    title,
+    onAfterClose,
+    inline,
+}: PersonsModalProps): JSX.Element {
     const [selectedUrlIndex, setSelectedUrlIndex] = useState(urlsIndex || 0)
     const originalUrl = (urls || [])[selectedUrlIndex]?.value || _url || ''
 
@@ -49,21 +59,24 @@ function PersonsModal({ url: _url, urlsIndex, urls, title, onAfterClose }: Perso
         isCohortModalOpen,
         isModalOpen,
         missingActorsCount,
+        propertiesTimelineFilterFromUrl,
     } = useValues(logic)
     const { loadActors, setSearchTerm, saveCohortWithUrl, setIsCohortModalOpen, closeModal } = useActions(logic)
     const { openSessionPlayer } = useActions(sessionPlayerModalLogic)
+    const { currentTeam } = useValues(teamLogic)
 
     const totalActorsCount = missingActorsCount + actors.length
 
     return (
         <>
             <LemonModal
-                title={''}
+                title={null}
                 isOpen={isModalOpen}
                 onClose={closeModal}
                 onAfterClose={onAfterClose}
                 simple
                 width={600}
+                inline={inline}
             >
                 <LemonModal.Header>
                     <h3>{typeof title === 'function' ? title(capitalizeFirstLetter(actorLabel.plural)) : title}</h3>
@@ -115,13 +128,18 @@ function PersonsModal({ url: _url, urlsIndex, urls, title, onAfterClose }: Perso
                     <div className="relative min-h-20 p-2 space-y-2 rounded bg-border-light overflow-y-auto mb-2">
                         {actors && actors.length > 0 ? (
                             <>
-                                {actors.map((x) => (
+                                {actors.map((actor) => (
                                     <ActorRow
-                                        key={x.id}
-                                        actor={x}
+                                        key={actor.id}
+                                        actor={actor}
                                         onOpenRecording={(sessionRecording) => {
                                             openSessionPlayer(sessionRecording)
                                         }}
+                                        propertiesTimelineFilter={
+                                            actor.type == 'person' && currentTeam?.person_on_events_querying_enabled
+                                                ? propertiesTimelineFilterFromUrl
+                                                : undefined
+                                        }
                                     />
                                 ))}
                             </>
@@ -190,9 +208,10 @@ function PersonsModal({ url: _url, urlsIndex, urls, title, onAfterClose }: Perso
 interface ActorRowProps {
     actor: ActorType
     onOpenRecording: (sessionRecording: Pick<SessionRecordingType, 'id' | 'matching_events'>) => void
+    propertiesTimelineFilter?: PropertiesTimelineFilterType
 }
 
-export function ActorRow({ actor, onOpenRecording }: ActorRowProps): JSX.Element {
+export function ActorRow({ actor, onOpenRecording, propertiesTimelineFilter }: ActorRowProps): JSX.Element {
     const [expanded, setExpanded] = useState(false)
     const [tab, setTab] = useState('properties')
     const name = isGroupType(actor) ? groupDisplayId(actor.group_key, actor.properties) : asDisplay(actor)
@@ -225,6 +244,7 @@ export function ActorRow({ actor, onOpenRecording }: ActorRowProps): JSX.Element
                     onClick={() => setExpanded(!expanded)}
                     icon={expanded ? <IconUnfoldLess /> : <IconUnfoldMore />}
                     title={expanded ? 'Show less' : 'Show more'}
+                    data-attr={`persons-modal-expand-${actor.id}`}
                 />
 
                 <ProfilePicture name={name} size="md" />
@@ -266,13 +286,13 @@ export function ActorRow({ actor, onOpenRecording }: ActorRowProps): JSX.Element
             </div>
 
             {expanded ? (
-                <div className="bg-side border-t">
-                    <Tabs defaultActiveKey={tab} onChange={setTab} tabBarStyle={{ paddingLeft: 20, marginBottom: 0 }}>
+                <div className="bg-side border-t rounded-b">
+                    <Tabs defaultActiveKey={tab} onChange={setTab} tabBarStyle={{ paddingLeft: 16, marginBottom: 0 }}>
                         <Tabs.TabPane tab="Properties" key="properties">
-                            {Object.keys(actor.properties).length ? (
-                                <PropertiesTable properties={actor.properties} />
+                            {propertiesTimelineFilter ? (
+                                <PropertiesTimeline actor={actor} filter={propertiesTimelineFilter} />
                             ) : (
-                                <p className="text-center m-4">There are no properties.</p>
+                                <PropertiesTable properties={actor.properties} />
                             )}
                         </Tabs.TabPane>
                         <Tabs.TabPane tab="Recordings" key="recordings">

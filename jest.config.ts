@@ -1,3 +1,5 @@
+import type { Config } from 'jest'
+
 process.env.TZ = process.env.TZ || 'UTC'
 
 /*
@@ -5,7 +7,9 @@ process.env.TZ = process.env.TZ || 'UTC'
  * https://jestjs.io/docs/en/configuration.html
  */
 
-export default {
+const esmModules = ['query-selector-shadow-dom', 'react-syntax-highlighter', '@react-hook']
+
+const config: Config = {
     // All imported modules in your tests should be mocked automatically
     // automock: false,
 
@@ -185,11 +189,11 @@ export default {
 
     // A map from regular expressions to paths to transformers
     transform: {
-        '\\.[jt]sx?$': 'esbuild-jest',
+        '\\.[jt]sx?$': '@sucrase/jest-plugin',
     },
 
     // An array of regexp pattern strings that are matched against all source file paths, matched files will skip transformation
-    transformIgnorePatterns: ['node_modules/(?!(query-selector-shadow-dom|react-syntax-highlighter|@react-hook)/)'],
+    transformIgnorePatterns: [`node_modules/(?!(?:.pnpm/)?(${esmModules.join('|')}))`],
 
     // An array of regexp pattern strings that are matched against all modules before the module loader will automatically return a mock for them
     // unmockedModulePathPatterns: undefined,
@@ -203,3 +207,5 @@ export default {
     // Whether to use watchman for file crawling
     // watchman: true,
 }
+
+export default config

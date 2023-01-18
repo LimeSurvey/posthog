@@ -16,9 +16,9 @@ from posthog.test.base import (
     ClickhouseTestMixin,
     _create_event,
     _create_person,
+    also_test_with_materialized_columns,
     flush_persons_and_events,
     snapshot_clickhouse_queries,
-    test_with_materialized_columns,
 )
 
 
@@ -77,7 +77,7 @@ class TestPerson(ClickhouseTestMixin, APIBaseTest):
         self.assertEqual(response_data[1]["name"], "$browser")
         self.assertEqual(response_data[1]["count"], 1)
 
-    @test_with_materialized_columns(person_properties=["random_prop"])
+    @also_test_with_materialized_columns(person_properties=["random_prop"])
     @snapshot_clickhouse_queries
     def test_person_property_values(self):
         _create_person(
@@ -104,7 +104,7 @@ class TestPerson(ClickhouseTestMixin, APIBaseTest):
         self.assertEqual(response.json()[0]["name"], "qwerty")
         self.assertEqual(response.json()[0]["count"], 1)
 
-    @test_with_materialized_columns(event_properties=["email"], person_properties=["email"])
+    @also_test_with_materialized_columns(event_properties=["email"], person_properties=["email"])
     @snapshot_clickhouse_queries
     def test_filter_person_email(self):
 
@@ -579,7 +579,7 @@ class TestPerson(ClickhouseTestMixin, APIBaseTest):
         created_ids.reverse()  # ids are returned in desc order
         self.assertEqual(returned_ids, created_ids, returned_ids)
 
-    def _get_person_activity(self, person_id: Optional[str] = None, expected_status: int = status.HTTP_200_OK):
+    def _get_person_activity(self, person_id: Optional[str] = None, *, expected_status: int = status.HTTP_200_OK):
         if person_id:
             url = f"/api/person/{person_id}/activity"
         else:

@@ -4,9 +4,11 @@ import type { sessionRecordingPlayerLogicType } from './sessionRecordingPlayerLo
 import { Replayer } from 'rrweb'
 import { eventUsageLogic } from 'lib/utils/eventUsageLogic'
 import {
+    AvailableFeature,
     MatchedRecording,
     PlayerPosition,
     RecordingSegment,
+    SessionPlayerData,
     SessionPlayerState,
     SessionRecordingId,
     SessionRecordingType,
@@ -20,9 +22,13 @@ import {
     getSegmentFromPlayerPosition,
 } from './playerUtils'
 import { playerSettingsLogic } from './playerSettingsLogic'
-import { sharedListLogic } from 'scenes/session-recordings/player/list/sharedListLogic'
 import equal from 'fast-deep-equal'
-import { fromParamsGivenUrl } from 'lib/utils'
+import { downloadFile, fromParamsGivenUrl } from 'lib/utils'
+import { lemonToast } from '@posthog/lemon-ui'
+import { delay } from 'kea-test-utils'
+import { ExportedSessionRecordingFile } from '../file-playback/sessionRecordingFilePlaybackLogic'
+import { userLogic } from 'scenes/userLogic'
+import { openBillingPopupModal } from 'scenes/billing/v2/BillingPopup'
 
 export const PLAYBACK_SPEEDS = [0.5, 1, 2, 3, 4, 8, 16]
 export const ONE_FRAME_MS = 100 // We don't really have frames but this feels granular enough
@@ -34,6 +40,8 @@ export interface Player {
 
 export interface SessionRecordingPlayerLogicProps {
     sessionRecordingId: SessionRecordingId
+    sessionRecordingData?: SessionPlayerData
+    playlistShortId?: string
     playerKey: string
     matching?: MatchedRecording[]
     recordingStartTime?: string
@@ -43,28 +51,23 @@ export const sessionRecordingPlayerLogic = kea<sessionRecordingPlayerLogicType>(
     path((key) => ['scenes', 'session-recordings', 'player', 'sessionRecordingPlayerLogic', key]),
     props({} as SessionRecordingPlayerLogicProps),
     key((props: SessionRecordingPlayerLogicProps) => `${props.playerKey}-${props.sessionRecordingId}`),
-    connect(({ sessionRecordingId, playerKey, recordingStartTime }: SessionRecordingPlayerLogicProps) => ({
+    connect((props: SessionRecordingPlayerLogicProps) => ({
         values: [
-            sessionRecordingDataLogic({ sessionRecordingId, recordingStartTime }),
+            sessionRecordingDataLogic(props),
             [
                 'sessionRecordingId',
                 'sessionPlayerData',
                 'sessionPlayerSnapshotDataLoading',
                 'sessionPlayerMetaDataLoading',
-                'loadMetaTimeMs',
-                'loadFirstSnapshotTimeMs',
-                'loadAllSnapshotsTimeMs',
             ],
-            sharedListLogic({ sessionRecordingId, playerKey }),
-            ['tab'],
             playerSettingsLogic,
             ['speed', 'skipInactivitySetting', 'isFullScreen'],
+            userLogic,
+            ['hasAvailableFeature'],
         ],
         actions: [
-            sessionRecordingDataLogic({ sessionRecordingId, recordingStartTime }),
+            sessionRecordingDataLogic(props),
             ['loadRecordingSnapshotsSuccess', 'loadRecordingSnapshotsFailure', 'loadRecordingMetaSuccess'],
-            sharedListLogic({ sessionRecordingId, playerKey }),
-            ['setTab'],
             playerSettingsLogic,
             ['setSpeed', 'setSkipInactivitySetting', 'setIsFullScreen'],
             eventUsageLogic,
@@ -73,6 +76,7 @@ export const sessionRecordingPlayerLogic = kea<sessionRecordingPlayerLogicType>(
                 'reportRecordingPlayerSkipInactivityToggled',
                 'reportRecordingPlayerSpeedChanged',
                 'reportRecordingViewedSummary',
+                'reportRecordingExportedToFile',
             ],
         ],
     })),
@@ -101,6 +105,7 @@ export const sessionRecordingPlayerLogic = kea<sessionRecordingPlayerLogicType>(
         seek: (playerPosition: PlayerPosition | null, forcePlay: boolean = false) => ({ playerPosition, forcePlay }),
         seekForward: (amount?: number) => ({ amount }),
         seekBackward: (amount?: number) => ({ amount }),
+        seekToTime: (timeInMilliseconds: number) => ({ timeInMilliseconds }),
         resolvePlayerState: true,
         updateAnimation: true,
         stopAnimation: true,
@@ -112,6 +117,7 @@ export const sessionRecordingPlayerLogic = kea<sessionRecordingPlayerLogicType>(
         incrementWarningCount: true,
         setMatching: (matching: SessionRecordingType['matching_events']) => ({ matching }),
         updateFromMetadata: true,
+        exportRecordingToFile: true,
     }),
     reducers(({ props }) => ({
         rootFrame: [
@@ -169,6 +175,7 @@ export const sessionRecordingPlayerLogic = kea<sessionRecordingPlayerLogicType>(
             {
                 setEndReached: (_, { reached }) => reached,
                 tryInitReplayer: () => false,
+                setCurrentPlayerPosition: () => false,
             },
         ],
     })),
@@ -217,7 +224,7 @@ export const sessionRecordingPlayerLogic = kea<sessionRecordingPlayerLogicType>(
             (recordingStartTime) => recordingStartTime ?? null,
         ],
     }),
-    listeners(({ values, actions, cache }) => ({
+    listeners(({ props, values, actions, cache }) => ({
         setRootFrame: () => {
             actions.tryInitReplayer()
         },
@@ -481,28 +488,13 @@ export const sessionRecordingPlayerLogic = kea<sessionRecordingPlayerLogicType>(
             breakpoint()
         },
         seekForward: ({ amount = values.jumpTimeMs }) => {
-            if (!values.currentPlayerPosition) {
-                return
-            }
-            const currentPlayerTime = getPlayerTimeFromPlayerPosition(
-                values.currentPlayerPosition,
-                values.sessionPlayerData.metadata.segments
-            )
-            if (currentPlayerTime !== null) {
-                const nextPlayerTime = currentPlayerTime + amount
-                let nextPlayerPosition = getPlayerPositionFromPlayerTime(
-                    nextPlayerTime,
-                    values.sessionPlayerData.metadata.segments
-                )
-                if (!nextPlayerPosition) {
-                    // At the end of the recording. Pause the player and set to the end of the recording
-                    actions.setEndReached()
-                    nextPlayerPosition = values.sessionPlayerData.metadata.segments.slice(-1)[0].endPlayerPosition
-                }
-                actions.seek(nextPlayerPosition)
-            }
+            actions.seekToTime((values.currentPlayerTime || 0) + amount)
         },
         seekBackward: ({ amount = values.jumpTimeMs }) => {
+            actions.seekToTime((values.currentPlayerTime || 0) - amount)
+        },
+
+        seekToTime: ({ timeInMilliseconds }) => {
             if (!values.currentPlayerPosition) {
                 return
             }
@@ -513,13 +505,19 @@ export const sessionRecordingPlayerLogic = kea<sessionRecordingPlayerLogicType>(
                 values.currentPlayerPosition,
                 values.sessionPlayerData.metadata.segments
             )
-            if (currentPlayerTime !== null) {
-                const nextPlayerTime = Math.max(currentPlayerTime - amount, 0)
-                const nextPlayerPosition = getPlayerPositionFromPlayerTime(
-                    nextPlayerTime,
-                    values.sessionPlayerData.metadata.segments
-                )
+            let nextPlayerPosition = getPlayerPositionFromPlayerTime(
+                Math.max(0, timeInMilliseconds),
+                values.sessionPlayerData.metadata.segments
+            )
 
+            if (!nextPlayerPosition) {
+                if ((currentPlayerTime || 0) < timeInMilliseconds) {
+                    actions.setEndReached()
+                    nextPlayerPosition = values.sessionPlayerData.metadata.segments.slice(-1)[0].endPlayerPosition
+                }
+            }
+
+            if (nextPlayerPosition) {
                 actions.seek(nextPlayerPosition)
             }
         },
@@ -615,6 +613,46 @@ export const sessionRecordingPlayerLogic = kea<sessionRecordingPlayerLogicType>(
                 cancelAnimationFrame(cache.timer)
             }
         },
+
+        exportRecordingToFile: async () => {
+            if (!values.sessionPlayerData) {
+                return
+            }
+
+            if (!values.hasAvailableFeature(AvailableFeature.RECORDINGS_FILE_EXPORT)) {
+                openBillingPopupModal({
+                    title: 'Unlock recording exports',
+                    description:
+                        'Export recordings to a file that can be stored wherever you like and loaded back into PostHog for playback at any time.',
+                })
+                return
+            }
+
+            const doExport = async (): Promise<void> => {
+                while (values.sessionPlayerData.next) {
+                    await delay(1000)
+                }
+
+                const payload: ExportedSessionRecordingFile = {
+                    version: '2022-12-02',
+                    data: values.sessionPlayerData,
+                }
+                const recordingFile = new File(
+                    [JSON.stringify(payload)],
+                    `export-${props.sessionRecordingId}.ph-recording.json`,
+                    { type: 'application/json' }
+                )
+
+                downloadFile(recordingFile)
+                actions.reportRecordingExportedToFile()
+            }
+
+            await lemonToast.promise(doExport(), {
+                success: 'Export complete!',
+                error: 'Export failed!',
+                pending: 'Exporting recording...',
+            })
+        },
     })),
     windowValues({
         isSmallScreen: (window: any) => window.innerWidth < getBreakpoint('md'),
@@ -641,13 +679,6 @@ export const sessionRecordingPlayerLogic = kea<sessionRecordingPlayerLogicType>(
                                   (1000 * 60 * 60 * 24)
                           )
                         : undefined,
-                meta_data_load_time_ms: values.loadMetaTimeMs ?? undefined,
-                first_snapshot_load_time_ms: values.loadFirstSnapshotTimeMs ?? undefined,
-                first_snapshot_and_meta_load_time_ms:
-                    values.loadFirstSnapshotTimeMs !== null && values.loadMetaTimeMs !== null
-                        ? Math.max(values.loadFirstSnapshotTimeMs, values.loadMetaTimeMs)
-                        : undefined,
-                all_snapshots_load_time_ms: values.loadAllSnapshotsTimeMs ?? undefined,
                 rrweb_warning_count: values.warningCount,
                 error_count_during_recording_playback: values.errorCount,
             })

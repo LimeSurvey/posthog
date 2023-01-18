@@ -12,6 +12,7 @@ interface PayGatePageInterface {
     hideUpgradeButton?: boolean
     docsLink?: string // Link to the docs of the feature, if no link is sent, it will be hidden
     featureKey: AvailableFeature
+    featureName?: string
 }
 
 export function PayGatePage({
@@ -20,9 +21,10 @@ export function PayGatePage({
     hideUpgradeButton,
     docsLink,
     featureKey,
+    featureName,
 }: PayGatePageInterface): JSX.Element {
     const { upgradeLink } = useValues(billingLogic)
-    const featureName = identifierToHuman(featureKey, 'title')
+    featureName = featureName || identifierToHuman(featureKey, 'title')
 
     return (
         <div className="pay-gate-page">
@@ -38,6 +40,7 @@ export function PayGatePage({
                     <LemonButton
                         type={hideUpgradeButton ? 'primary' : 'secondary'}
                         to={`${docsLink}?utm_medium=in-product&utm_campaign=${featureKey}-upgrade-learn-more`}
+                        targetBlank
                         center
                         data-attr={`${featureKey}-learn-more`}
                     >

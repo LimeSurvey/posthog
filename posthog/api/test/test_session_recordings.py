@@ -1,4 +1,5 @@
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
+from unittest.mock import ANY
 from urllib.parse import urlencode
 
 from dateutil.parser import parse
@@ -8,14 +9,20 @@ from freezegun import freeze_time
 from rest_framework import status
 
 from posthog.api.session_recording import DEFAULT_RECORDING_CHUNK_LIMIT
-from posthog.models import Organization, Person, SessionRecordingPlaylist
+from posthog.models import Organization, Person
 from posthog.models.session_recording_event import SessionRecordingViewed
 from posthog.models.team import Team
 from posthog.session_recordings.test.test_factory import create_session_recording_events
-from posthog.test.base import APIBaseTest, ClickhouseTestMixin
+from posthog.test.base import (
+    APIBaseTest,
+    ClickhouseTestMixin,
+    QueryMatchingTest,
+    flush_persons_and_events,
+    snapshot_postgres_queries,
+)
 
 
-class TestSessionRecordings(APIBaseTest, ClickhouseTestMixin):
+class TestSessionRecordings(APIBaseTest, ClickhouseTestMixin, QueryMatchingTest):
     def setUp(self):
         super().setUp()
 
@@ -32,9 +39,20 @@ class TestSessionRecordings(APIBaseTest, ClickhouseTestMixin):
         source=0,
         has_full_snapshot=True,
         type=2,
+        snapshot_data=None,
     ):
         if team_id is None:
             team_id = self.team.pk
+
+        snapshot = {
+            "timestamp": timestamp.timestamp() * 1000,
+            "has_full_snapshot": has_full_snapshot,
+            "type": type,
+            "data": {"source": source},
+        }
+
+        if snapshot_data:
+            snapshot.update(snapshot_data)
 
         create_session_recording_events(
             team_id=team_id,
@@ -42,14 +60,7 @@ class TestSessionRecordings(APIBaseTest, ClickhouseTestMixin):
             timestamp=timestamp,
             session_id=session_id,
             window_id=window_id,
-            snapshots=[
-                {
-                    "timestamp": timestamp.timestamp() * 1000,
-                    "has_full_snapshot": has_full_snapshot,
-                    "type": type,
-                    "data": {"source": source},
-                }
-            ],
+            snapshots=[snapshot],
         )
 
     def create_chunked_snapshots(
@@ -117,16 +128,44 @@ class TestSessionRecordings(APIBaseTest, ClickhouseTestMixin):
         self.assertEqual(first_session["distinct_id"], "user2")
         self.assertEqual(parse(first_session["start_time"]), (base_time + relativedelta(seconds=20)))
         self.assertEqual(parse(first_session["end_time"]), (base_time + relativedelta(seconds=20)))
-        self.assertEqual(first_session["recording_duration"], "0.0")
+        self.assertEqual(first_session["recording_duration"], 0)
         self.assertEqual(first_session["viewed"], False)
 
         self.assertEqual(second_session["id"], "1")
         self.assertEqual(second_session["distinct_id"], "user")
         self.assertEqual(parse(second_session["start_time"]), (base_time))
         self.assertEqual(parse(second_session["end_time"]), (base_time + relativedelta(seconds=30)))
-        self.assertEqual(second_session["recording_duration"], "30.0")
+        self.assertEqual(second_session["recording_duration"], 30)
         self.assertEqual(second_session["viewed"], False)
         self.assertEqual(second_session["person"]["id"], p.pk)
+
+    @snapshot_postgres_queries
+    def test_listing_recordings_is_not_nplus1_for_persons(self):
+        # request once without counting queries to cache an ee.license lookup that makes results vary otherwise
+        self.client.get(f"/api/projects/{self.team.id}/session_recordings")
+
+        base_time = (now() - relativedelta(days=1)).replace(microsecond=0)
+        num_queries = 10
+
+        self._person_with_snapshots(base_time=base_time, distinct_id="user", session_id="1")
+        with self.assertNumQueries(num_queries):
+            self.client.get(f"/api/projects/{self.team.id}/session_recordings")
+
+        self._person_with_snapshots(base_time=base_time, distinct_id="user2", session_id="2")
+        with self.assertNumQueries(num_queries):
+            self.client.get(f"/api/projects/{self.team.id}/session_recordings")
+
+        self._person_with_snapshots(base_time=base_time, distinct_id="user3", session_id="3")
+        with self.assertNumQueries(num_queries):
+            self.client.get(f"/api/projects/{self.team.id}/session_recordings")
+
+    def _person_with_snapshots(self, base_time: datetime, distinct_id: str = "user", session_id: str = "1") -> None:
+        Person.objects.create(
+            team=self.team, distinct_ids=[distinct_id], properties={"$some_prop": "something", "email": "bob@bob.com"}
+        )
+        self.create_snapshot(distinct_id, session_id, base_time)
+        self.create_snapshot(distinct_id, session_id, base_time + relativedelta(seconds=10))
+        flush_persons_and_events()
 
     def test_session_recordings_dont_leak_teams(self):
         another_team = Team.objects.create(organization=self.organization)
@@ -204,22 +243,50 @@ class TestSessionRecordings(APIBaseTest, ClickhouseTestMixin):
         response = self.client.get(f"/api/projects/{self.team.id}/session_recordings/1")
         response_data = response.json()
         # In the metadata response too
-        self.assertEqual(response_data["result"]["session_recording"]["viewed"], True)
+        self.assertEqual(response_data["viewed"], True)
 
     def test_get_single_session_recording_metadata(self):
-        p = Person.objects.create(
-            team=self.team, distinct_ids=["d1"], properties={"$some_prop": "something", "email": "bob@bob.com"}
-        )
-        session_recording_id = "session_1"
-        base_time = (now() - relativedelta(days=1)).replace(microsecond=0)
-        self.create_snapshot("d1", session_recording_id, base_time)
-        self.create_snapshot("d1", session_recording_id, base_time + relativedelta(seconds=30))
+        with freeze_time("2023-01-01T12:00:00.000Z"):
+            p = Person.objects.create(
+                team=self.team, distinct_ids=["d1"], properties={"$some_prop": "something", "email": "bob@bob.com"}
+            )
+            session_recording_id = "session_1"
+            base_time = (now() - relativedelta(days=1)).replace(microsecond=0)
+            self.create_snapshot("d1", session_recording_id, base_time)
+            self.create_snapshot("d1", session_recording_id, base_time + relativedelta(seconds=30))
+
         response = self.client.get(f"/api/projects/{self.team.id}/session_recordings/{session_recording_id}")
         response_data = response.json()
-        self.assertEqual(response_data["result"]["person"]["id"], p.pk)
-        self.assertEqual(
-            response_data["result"]["session_recording"]["start_and_end_times_by_window_id"],
-            {
+
+        assert response_data == {
+            "id": "session_1",
+            "distinct_id": "d1",
+            "viewed": False,
+            "pinned_count": 0,
+            "recording_duration": 30,
+            "start_time": base_time.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "end_time": (base_time + relativedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "click_count": 0,
+            "keypress_count": 0,
+            "start_url": None,
+            "matching_events": None,
+            "person": {
+                "id": p.id,
+                "name": "bob@bob.com",
+                "distinct_ids": ["d1"],
+                "properties": {"email": "bob@bob.com", "$some_prop": "something"},
+                "created_at": "2023-01-01T12:00:00Z",
+                "uuid": ANY,
+            },
+            "segments": [
+                {
+                    "start_time": base_time.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "end_time": (base_time + relativedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "window_id": "",
+                    "is_active": False,
+                }
+            ],
+            "start_and_end_times_by_window_id": {
                 "": {
                     "window_id": "",
                     "start_time": base_time.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -227,20 +294,9 @@ class TestSessionRecordings(APIBaseTest, ClickhouseTestMixin):
                     "is_active": False,
                 }
             },
-        )
-        self.assertEqual(
-            response_data["result"]["session_recording"]["segments"],
-            [
-                {
-                    "start_time": base_time.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "end_time": (base_time + relativedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "is_active": False,
-                    "window_id": "",
-                }
-            ],
-        )
-        self.assertEqual(response_data["result"]["session_recording"]["viewed"], False)
-        self.assertEqual(response_data["result"]["session_recording"]["session_id"], session_recording_id)
+            "snapshot_data_by_window_id": None,
+            "storage": "clickhouse",
+        }
 
     def test_get_default_limit_of_chunks(self):
         base_time = now()
@@ -325,9 +381,9 @@ class TestSessionRecordings(APIBaseTest, ClickhouseTestMixin):
                 )
             response = self.client.get(f"/api/projects/{self.team.id}/session_recordings/{chunked_session_id}")
             response_data = response.json()
-            self.assertEqual(response_data["result"]["person"]["id"], p.pk)
+            self.assertEqual(response_data["person"]["id"], p.pk)
             self.assertEqual(
-                response_data["result"]["session_recording"]["start_and_end_times_by_window_id"],
+                response_data["start_and_end_times_by_window_id"],
                 {
                     "": {
                         "is_active": False,
@@ -340,7 +396,7 @@ class TestSessionRecordings(APIBaseTest, ClickhouseTestMixin):
                 },
             )
             self.assertEqual(
-                response_data["result"]["session_recording"]["segments"],
+                response_data["segments"],
                 [
                     {
                         "start_time": now().replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -352,9 +408,8 @@ class TestSessionRecordings(APIBaseTest, ClickhouseTestMixin):
                     }
                 ],
             )
-            self.assertEqual(response_data["result"]["session_recording"]["viewed"], False)
-            self.assertEqual(response_data["result"]["session_recording"]["session_id"], chunked_session_id)
-            self.assertEqual(response_data["result"]["session_recording"]["playlists"], [])
+            self.assertEqual(response_data["viewed"], False)
+            self.assertEqual(response_data["id"], chunked_session_id)
 
     def test_single_session_recording_doesnt_leak_teams(self):
         another_team = Team.objects.create(organization=self.organization)
@@ -369,7 +424,7 @@ class TestSessionRecordings(APIBaseTest, ClickhouseTestMixin):
         self.create_snapshot("d1", "id_no_person", now() - relativedelta(days=1))
         response = self.client.get(f"/api/projects/{self.team.id}/session_recordings/id_no_person")
         response_data = response.json()
-        self.assertEqual(response_data["result"]["person"], None)
+        self.assertEqual(response_data["person"], None)
 
     def test_session_recording_doesnt_exist(self):
         response = self.client.get(f"/api/projects/{self.team.id}/session_recordings/non_existent_id")
@@ -385,37 +440,7 @@ class TestSessionRecordings(APIBaseTest, ClickhouseTestMixin):
         response = self.client.get(f"/api/projects/{another_team.pk}/session_recordings/id_no_team_leaking")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_adding_and_removing_recording_from_static_playlists(self):
-        with freeze_time("2020-09-13T12:26:40.000Z"):
-            Person.objects.create(
-                team=self.team, distinct_ids=["user"], properties={"$some_prop": "something", "email": "bob@bob.com"}
-            )
-            self.create_snapshot("user", "1", now() - relativedelta(days=1))
-            playlist1 = SessionRecordingPlaylist.objects.create(
-                team=self.team, name="playlist1", created_by=self.user, is_static=True
-            )
-            playlist2 = SessionRecordingPlaylist.objects.create(
-                team=self.team, name="playlist2", created_by=self.user, is_static=True
-            )
-
-            # Add to playlists 1 and 2
-            response_data = self.client.patch(
-                f"/api/projects/{self.team.id}/session_recordings/1",
-                {"playlists": [playlist1.id, playlist2.id]},
-            ).json()
-            self.assertEqual(response_data["result"]["session_recording"]["playlists"], [playlist1.id, playlist2.id])
-
-            playlist3 = SessionRecordingPlaylist.objects.create(
-                team=self.team, name="playlist3", created_by=self.user, is_static=True
-            )
-
-            # Remove from playlist 1 and add to playlist 3
-            response_data = self.client.patch(
-                f"/api/projects/{self.team.id}/session_recordings/1", {"playlists": [playlist2.id, playlist3.id]}
-            ).json()
-            self.assertEqual(response_data["result"]["session_recording"]["playlists"], [playlist2.id, playlist3.id])
-
-    def test_static_recordings_filter(self):
+    def test_session_ids_filter(self):
         with freeze_time("2020-09-13T12:26:40.000Z"):
             Person.objects.create(
                 team=self.team, distinct_ids=["user"], properties={"$some_prop": "something", "email": "bob@bob.com"}
@@ -425,7 +450,7 @@ class TestSessionRecordings(APIBaseTest, ClickhouseTestMixin):
             self.create_snapshot("user", "3", now() - relativedelta(days=3))
 
             # Fetch playlist
-            params_string = urlencode({"static_recordings": '[{"id": "1"}, {"id": "2"}, {"id": "3"}]'})
+            params_string = urlencode({"session_ids": '["1", "2", "3"]'})
             response = self.client.get(f"/api/projects/{self.team.id}/session_recordings?{params_string}")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             response_data = response.json()
@@ -435,7 +460,7 @@ class TestSessionRecordings(APIBaseTest, ClickhouseTestMixin):
             self.assertEqual(response_data["results"][1]["id"], "2")
             self.assertEqual(response_data["results"][2]["id"], "3")
 
-    def test_empty_list_static_recordings_filter_returns_no_recordings(self):
+    def test_empty_list_session_ids_filter_returns_no_recordings(self):
         with freeze_time("2020-09-13T12:26:40.000Z"):
             Person.objects.create(
                 team=self.team, distinct_ids=["user"], properties={"$some_prop": "something", "email": "bob@bob.com"}
@@ -445,9 +470,40 @@ class TestSessionRecordings(APIBaseTest, ClickhouseTestMixin):
             self.create_snapshot("user", "3", now() - relativedelta(days=3))
 
             # Fetch playlist
-            params_string = urlencode({"static_recordings": "[]"})
+            params_string = urlencode({"session_ids": "[]"})
             response = self.client.get(f"/api/projects/{self.team.id}/session_recordings?{params_string}")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             response_data = response.json()
 
             self.assertEqual(len(response_data["results"]), 0)
+
+    def test_regression_encoded_emojis_dont_crash(self):
+
+        Person.objects.create(
+            team=self.team, distinct_ids=["user"], properties={"$some_prop": "something", "email": "bob@bob.com"}
+        )
+        with freeze_time("2022-01-01T12:00:00.000Z"):
+
+            self.create_snapshot(
+                "user",
+                "1",
+                now() - relativedelta(days=1),
+                snapshot_data={"texts": ["\\ud83d\udc83\\ud83c\\udffb"]},  # This is an invalid encoded emoji
+            )
+
+        response = self.client.get(f"/api/projects/{self.team.id}/session_recordings/1/snapshots")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+
+        assert not response_data["next"]
+        assert response_data["snapshot_data_by_window_id"] == {
+            "": [
+                {
+                    "texts": ["\\ud83d\udc83\\ud83c\\udffb"],
+                    "timestamp": 1640952000000.0,
+                    "has_full_snapshot": True,
+                    "type": 2,
+                    "data": {"source": 0},
+                }
+            ]
+        }

@@ -1,4 +1,4 @@
-import { sessionRecordingsListLogic, PLAYLIST_LIMIT, DEFAULT_RECORDING_FILTERS } from './sessionRecordingsListLogic'
+import { sessionRecordingsListLogic, RECORDINGS_LIMIT, DEFAULT_RECORDING_FILTERS } from './sessionRecordingsListLogic'
 import { expectLogic } from 'kea-test-utils'
 import { initKeaTests } from '~/test/init'
 import { router } from 'kea-router'
@@ -32,11 +32,11 @@ describe('sessionRecordingsListLogic', () => {
                                 results: ["List of specific user's recordings from server"],
                             },
                         ]
-                    } else if (searchParams.get('offset') === `${PLAYLIST_LIMIT}`) {
+                    } else if (searchParams.get('offset') === `${RECORDINGS_LIMIT}`) {
                         return [
                             200,
                             {
-                                results: [`List of recordings offset by ${PLAYLIST_LIMIT}`],
+                                results: [`List of recordings offset by ${RECORDINGS_LIMIT}`],
                             },
                         ]
                     } else if (
@@ -56,18 +56,19 @@ describe('sessionRecordingsListLogic', () => {
                                 results: ['Recordings filtered by duration'],
                             },
                         ]
-                    } else if (searchParams.get('static_recordings')) {
-                        return [
-                            200,
-                            {
-                                results: ['Recordings belonging to static playlist'],
-                            },
-                        ]
                     }
                     return [
                         200,
                         {
                             results: listOfSessionRecordings,
+                        },
+                    ]
+                },
+                '/api/projects/:team/session_recording_playlists/:playlist_id/recordings': () => {
+                    return [
+                        200,
+                        {
+                            results: ['Pinned recordings'],
                         },
                     ]
                 },
@@ -78,15 +79,24 @@ describe('sessionRecordingsListLogic', () => {
 
     describe('global logic', () => {
         beforeEach(() => {
-            logic = sessionRecordingsListLogic({ key: 'tests', updateSearchParams: true })
+            logic = sessionRecordingsListLogic({
+                key: 'tests',
+                playlistShortId: 'playlist-test',
+                updateSearchParams: true,
+            })
             logic.mount()
         })
 
         describe('core assumptions', () => {
-            it('loads session recordings after mounting', async () => {
+            it('loads recent recordings and pinned recordings after mounting', async () => {
                 await expectLogic(logic)
-                    .toDispatchActions(['getSessionRecordingsSuccess'])
-                    .toMatchValues({ sessionRecordings: listOfSessionRecordings })
+                    .toDispatchActionsInAnyOrder(['getSessionRecordingsSuccess', 'loadPinnedRecordingsSuccess'])
+                    .toMatchValues({
+                        sessionRecordings: listOfSessionRecordings,
+                        pinnedRecordingsResponse: {
+                            results: ['Pinned recordings'],
+                        },
+                    })
             })
         })
 
@@ -167,10 +177,10 @@ describe('sessionRecordingsListLogic', () => {
                 await expectLogic(logic, () => {
                     logic.actions.loadNext()
                 })
-                    .toMatchValues({ filters: expect.objectContaining({ offset: PLAYLIST_LIMIT }) })
+                    .toMatchValues({ filters: expect.objectContaining({ offset: RECORDINGS_LIMIT }) })
                     .toDispatchActions(['loadNext', 'getSessionRecordingsSuccess'])
-                    .toMatchValues({ sessionRecordings: [`List of recordings offset by ${PLAYLIST_LIMIT}`] })
-                expect(router.values.searchParams.filters).toHaveProperty('offset', PLAYLIST_LIMIT)
+                    .toMatchValues({ sessionRecordings: [`List of recordings offset by ${RECORDINGS_LIMIT}`] })
+                expect(router.values.searchParams.filters).toHaveProperty('offset', RECORDINGS_LIMIT)
 
                 await expectLogic(logic, () => {
                     logic.actions.loadPrev()
@@ -237,20 +247,21 @@ describe('sessionRecordingsListLogic', () => {
             })
         })
 
-        describe('fetch static recordings list', () => {
+        describe('fetch pinned recordings', () => {
             beforeEach(() => {
                 logic = sessionRecordingsListLogic({
                     key: 'static-tests',
-                    isStatic: true,
-                    staticRecordings: [{ id: '1' }, { id: '2' }],
+                    playlistShortId: 'static-playlist-test',
                 })
                 logic.mount()
             })
             it('calls list session recordings for static playlists', async () => {
                 await expectLogic(logic)
-                    .toDispatchActions(['getSessionRecordingsSuccess'])
+                    .toDispatchActions(['loadPinnedRecordingsSuccess'])
                     .toMatchValues({
-                        sessionRecordings: ['Recordings belonging to static playlist'],
+                        pinnedRecordingsResponse: {
+                            results: ['Pinned recordings'],
+                        },
                     })
             })
         })

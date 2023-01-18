@@ -1,7 +1,8 @@
 import os
 import time
 from random import randrange
-from typing import Any, Dict, List
+from typing import Optional
+from uuid import UUID
 
 from celery import Celery
 from celery.schedules import crontab
@@ -91,21 +92,24 @@ def setup_periodic_tasks(sender: Celery, **kwargs):
         sender.add_periodic_task(crontab(hour=4, minute=0), verify_persons_data_in_sync.s())
 
     if is_cloud() or settings.DEMO:
-        # Reset master project data every day at 5 AM UTC
-        sender.add_periodic_task(crontab(hour=5, minute=0), demo_reset_master_team.s())
+        # Reset master project data every Monday at Thursday at 5 AM UTC. Mon and Thu because doing this every day
+        # would be too hard on ClickHouse, and those days ensure most users will have data at most 3 days old.
+        sender.add_periodic_task(crontab(day_of_week="mon,thu", hour=5, minute=0), demo_reset_master_team.s())
 
     sender.add_periodic_task(crontab(day_of_week="fri", hour=0, minute=0), clean_stale_partials.s())
-
-    # Send the emails at 3 PM UTC every day
-    sender.add_periodic_task(crontab(hour=15, minute=0), send_first_ingestion_reminder_emails.s())
-    sender.add_periodic_task(crontab(hour=15, minute=0), send_second_ingestion_reminder_emails.s())
 
     # Sync all Organization.available_features every hour
     sender.add_periodic_task(crontab(minute=30, hour="*"), sync_all_organization_available_features.s())
 
+    sync_insight_cache_states_schedule = get_crontab(settings.SYNC_INSIGHT_CACHE_STATES_SCHEDULE)
+    if sync_insight_cache_states_schedule:
+        sender.add_periodic_task(
+            sync_insight_cache_states_schedule, sync_insight_cache_states_task.s(), name="sync insight cache states"
+        )
+
     sender.add_periodic_task(
         settings.UPDATE_CACHED_DASHBOARD_ITEMS_INTERVAL_SECONDS,
-        check_cached_items.s(),
+        schedule_cache_updates_task.s(),
         name="check dashboard items",
     )
 
@@ -164,8 +168,8 @@ def setup_periodic_tasks(sender: Celery, **kwargs):
                 name="clickhouse mark all columns as materialized",
             )
 
-        # Hourly check for email subscriptions
         sender.add_periodic_task(crontab(hour="*", minute=55), schedule_all_subscriptions.s())
+        sender.add_periodic_task(crontab(hour=2, minute=randrange(0, 40)), ee_persist_finished_recordings.s())
 
         sender.add_periodic_task(
             settings.COUNT_TILES_WITH_NO_FILTERS_HASH_INTERVAL_SECONDS,
@@ -174,7 +178,9 @@ def setup_periodic_tasks(sender: Celery, **kwargs):
         )
 
         sender.add_periodic_task(
-            crontab(hour="*"), check_flags_to_rollback.s(), name="check feature flags that should be rolled back"
+            crontab(minute=0, hour="*"),
+            check_flags_to_rollback.s(),
+            name="check feature flags that should be rolled back",
         )
 
 
@@ -287,10 +293,7 @@ def pg_plugin_server_query_timing():
             pass
 
 
-CLICKHOUSE_TABLES = ["events", "person", "person_distinct_id", "person_distinct_id2", "session_recording_events"]
-
-if settings.CLICKHOUSE_REPLICATION:
-    CLICKHOUSE_TABLES.extend(["sharded_events", "sharded_session_recording_events"])
+CLICKHOUSE_TABLES = ["events", "person", "person_distinct_id2", "session_recording_events"]
 
 
 @app.task(ignore_result=True)
@@ -324,15 +327,28 @@ def ingestion_lag():
 
     # Requires https://github.com/PostHog/posthog-heartbeat-plugin to be enabled on team 2
     # Note that it runs every minute and we compare it with now(), so there's up to 60s delay
-    for event, metric in HEARTBEAT_EVENT_TO_INGESTION_LAG_METRIC.items():
-        try:
-            query = """
-                SELECT now() - max(parseDateTimeBestEffortOrNull(JSONExtractString(properties, '$timestamp')))
-                FROM events WHERE team_id IN %(team_ids)s AND _timestamp > yesterday() AND event = %(event)s;"""
-            lag = sync_execute(query, {"team_ids": settings.INGESTION_LAG_METRIC_TEAM_IDS, "event": event})[0][0]
+    query = """
+    SELECT event, date_diff('second', max(timestamp), now())
+    FROM events
+    WHERE team_id IN %(team_ids)s
+        AND event IN %(events)s
+        AND timestamp > yesterday() AND timestamp < now() + toIntervalMinute(3)
+    GROUP BY event
+    """
+
+    try:
+        results = sync_execute(
+            query,
+            {
+                "team_ids": settings.INGESTION_LAG_METRIC_TEAM_IDS,
+                "events": list(HEARTBEAT_EVENT_TO_INGESTION_LAG_METRIC.keys()),
+            },
+        )
+        for event, lag in results:
+            metric = HEARTBEAT_EVENT_TO_INGESTION_LAG_METRIC[event]
             statsd.gauge(f"posthog_celery_{metric}_lag_seconds_rough_minute_precision", lag)
-        except:
-            pass
+    except:
+        pass
 
 
 @app.task(ignore_result=True)
@@ -424,10 +440,16 @@ def clickhouse_mutation_count():
 
 @app.task(ignore_result=True)
 def clickhouse_clear_removed_data():
-    from posthog.models.async_deletion.delete import mark_deletions_done, run_event_table_deletions
+    from posthog.models.async_deletion.delete_cohorts import AsyncCohortDeletion
+    from posthog.models.async_deletion.delete_events import AsyncEventDeletion
 
-    mark_deletions_done()
-    run_event_table_deletions()
+    runner = AsyncEventDeletion()
+    runner.mark_deletions_done()
+    runner.run()
+
+    cohort_runner = AsyncCohortDeletion()
+    cohort_runner.mark_deletions_done()
+    cohort_runner.run()
 
 
 @app.task(ignore_result=True)
@@ -474,21 +496,31 @@ def calculate_cohort():
 
 
 @app.task(ignore_result=True)
-def check_cached_items():
-    from posthog.caching.update_cache import update_cached_items
+def sync_insight_cache_states_task():
+    from posthog.caching.insight_caching_state import sync_insight_cache_states
 
-    update_cached_items()
+    sync_insight_cache_states()
 
 
-@app.task(ignore_result=False)
-def update_cache_item_task(key: str, cache_type, payload: dict) -> List[Dict[str, Any]]:
-    """
-    Tasks used in a group (as this is) must not ignore their results
-    https://docs.celeryq.dev/en/latest/userguide/canvas.html#groups:~:text=Similarly%20to%20chords%2C%20tasks%20used%20in%20a%20group%20must%20not%20ignore%20their%20results.
-    """
-    from posthog.caching.update_cache import update_cache_item
+@app.task(ignore_result=True)
+def schedule_cache_updates_task():
+    from posthog.caching.insight_cache import schedule_cache_updates
 
-    return update_cache_item(key, cache_type, payload)
+    schedule_cache_updates()
+
+
+@app.task(ignore_result=True)
+def update_cache_task(caching_state_id: UUID):
+    from posthog.caching.insight_cache import update_cache
+
+    update_cache(caching_state_id)
+
+
+@app.task(ignore_result=True)
+def sync_insight_caching_state(team_id: int, insight_id: Optional[int] = None, dashboard_tile_id: Optional[int] = None):
+    from posthog.caching.insight_caching_state import sync_insight_caching_state
+
+    sync_insight_caching_state(team_id, insight_id, dashboard_tile_id)
 
 
 @app.task(ignore_result=True)
@@ -552,20 +584,6 @@ def calculate_billing_daily_usage():
         pass
     else:
         compute_daily_usage_for_organizations()
-
-
-@app.task(ignore_result=True)
-def send_first_ingestion_reminder_emails():
-    from posthog.tasks.email import send_first_ingestion_reminder_emails
-
-    send_first_ingestion_reminder_emails()
-
-
-@app.task(ignore_result=True)
-def send_second_ingestion_reminder_emails():
-    from posthog.tasks.email import send_second_ingestion_reminder_emails
-
-    send_second_ingestion_reminder_emails()
 
 
 @app.task(ignore_result=True)
@@ -664,3 +682,23 @@ def check_flags_to_rollback():
         check_flags_to_rollback()
     except ImportError:
         pass
+
+
+@app.task(ignore_result=True)
+def ee_persist_single_recording(id: str, team_id: int):
+    try:
+        from ee.tasks.session_recording.persistence import persist_single_recording
+
+        persist_single_recording(id, team_id)
+    except ImportError:
+        pass
+
+
+@app.task(ignore_result=True)
+def ee_persist_finished_recordings():
+    try:
+        from ee.tasks.session_recording.persistence import persist_finished_recordings
+    except ImportError:
+        pass
+    else:
+        persist_finished_recordings()
